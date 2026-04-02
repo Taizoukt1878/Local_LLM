@@ -1,0 +1,146 @@
+const BASE = "http://127.0.0.1:8765";
+
+export async function getSystemInfo() {
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/system/info`);
+  } catch {
+    throw new Error("BACKEND_OFFLINE");
+  }
+  if (!res.ok) throw new Error("Failed to read system info");
+  return res.json();
+}
+
+export async function getInstallStatus() {
+  const res = await fetch(`${BASE}/install/status`);
+  if (!res.ok) throw new Error("Failed to check install status");
+  return res.json() as Promise<{ installed: boolean; running: boolean }>;
+}
+
+export async function getCatalog() {
+  const res = await fetch(`${BASE}/catalog`);
+  if (!res.ok) throw new Error("Failed to load model catalog");
+  return res.json();
+}
+
+export async function getInstalledModels() {
+  const res = await fetch(`${BASE}/models/installed`);
+  if (!res.ok) throw new Error("Failed to list installed models");
+  return res.json();
+}
+
+export async function deleteModel(name: string, backend: string) {
+  const res = await fetch(
+    `${BASE}/models/${encodeURIComponent(name)}?backend=${backend}`,
+    { method: "DELETE" }
+  );
+  if (!res.ok) throw new Error("Failed to delete model");
+}
+
+/** Stream Ollama install progress. Calls onEvent for each SSE data line. */
+export function streamOllamaInstall(
+  onEvent: (data: Record<string, unknown>) => void
+): () => void {
+  const es = new EventSource(`${BASE}/install/ollama`);
+  es.onmessage = (e) => {
+    try {
+      onEvent(JSON.parse(e.data));
+    } catch (_) {}
+  };
+  es.onerror = () => es.close();
+  return () => es.close();
+}
+
+/** Stream model pull progress. */
+export function streamModelPull(
+  name: string,
+  backend: string,
+  downloadUrl: string | undefined,
+  onEvent: (data: Record<string, unknown>) => void
+): () => void {
+  let closed = false;
+
+  fetch(`${BASE}/models/pull`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, backend, download_url: downloadUrl }),
+  }).then(async (res) => {
+    const reader = res.body?.getReader();
+    if (!reader) return;
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done || closed) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          try {
+            onEvent(JSON.parse(line.slice(6)));
+          } catch (_) {}
+        }
+      }
+    }
+  });
+
+  return () => {
+    closed = true;
+  };
+}
+
+/** Stream chat response. Returns a cleanup fn. */
+export function streamChat(
+  model: string,
+  backend: string,
+  messages: { role: string; content: string }[],
+  onToken: (token: string) => void,
+  onDone: () => void,
+  onError: (msg: string) => void
+): () => void {
+  let closed = false;
+
+  fetch(`${BASE}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, backend, messages }),
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Unknown error" }));
+        onError(err.message ?? "Something went wrong");
+        return;
+      }
+      const reader = res.body?.getReader();
+      if (!reader) return;
+      const decoder = new TextDecoder();
+      let buf = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done || closed) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.done) {
+              onDone();
+              return;
+            }
+            if (event.token) onToken(event.token);
+          } catch (_) {}
+        }
+      }
+      onDone();
+    })
+    .catch(() => onError("Could not connect to the AI backend."));
+
+  return () => {
+    closed = true;
+  };
+}

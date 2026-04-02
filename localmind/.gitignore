@@ -3,13 +3,13 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.egg-info/
-.env
+.env/
 .venv
 .localllm/
 dist/
 build/
 *.spec
-.localllm
+.localllm/
 
 # PyInstaller output
 src-tauri/binaries/
