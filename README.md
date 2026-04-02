@@ -54,6 +54,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+> **Note — `llama-cpp-python` build variants:**
+> The default `pip install` compiles for CPU only. For hardware acceleration use one of these instead:
+> - **macOS Apple Silicon (Metal):** `CMAKE_ARGS="-DLLAMA_METAL=on" pip install llama-cpp-python`
+> - **NVIDIA GPU (CUDA):** `CMAKE_ARGS="-DLLAMA_CUBLAS=on" pip install llama-cpp-python`
+> - **CPU only (any platform):** `pip install llama-cpp-python` *(no extra flags needed)*
+
 Start the backend in dev mode (runs on port 8765):
 
 ```bash
