@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.env
+.venv
+.localllm/
+dist/
+build/
+*.spec
+.localllm
+
+# PyInstaller output
+src-tauri/binaries/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/WixTools/
+
+# macOS
+.DS_Store
+*.xcuserstate
+
+# Windows
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 
