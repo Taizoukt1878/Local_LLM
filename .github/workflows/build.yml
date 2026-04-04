@@ -161,11 +161,16 @@ jobs:
             libwebkit2gtk-4.0-dev \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
+            libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
             libgtk-3-dev \
+            libgdk-pixbuf2.0-dev \
             libssl-dev \
-            libayatana-appindicator3-dev || true
+            libglib2.0-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            libatk1.0-dev || true
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
