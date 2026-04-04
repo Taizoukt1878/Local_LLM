@@ -10,7 +10,7 @@ dist/
 build/
 
 # PyInstaller
-src-tauri/binaries/
+localmind/src-tauri/binaries*
 
 # Rust / Tauri
 target/
