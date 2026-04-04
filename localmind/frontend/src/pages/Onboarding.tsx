@@ -32,6 +32,7 @@ interface HardwareProfile {
 interface Model {
   id: string;
   label: string;
+  tagline: string;
   backend: string;
   size_gb: number;
   description: string;

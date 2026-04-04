@@ -39,7 +39,7 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [loadingModels, setLoadingModels] = useState(true);
-  const [catalog, setCatalog] = useState<Record<string, { models: { id: string; label: string; backend: string; size_gb: number; description: string; download_url?: string }[] }>>({});
+  const [catalog, setCatalog] = useState<Record<string, { models: { id: string; label: string; tagline: string; backend: string; size_gb: number; description: string; download_url?: string }[] }>>({});
   const [pulling, setPulling] = useState<Record<string, number>>({});
 
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -156,6 +156,14 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
     }
   };
 
+  const getModelTagline = (id: string) => {
+    for (const tier of Object.values(catalog)) {
+      const match = tier.models.find((m) => m.id === id);
+      if (match) return match.tagline;
+    }
+    return null;
+  };
+
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
@@ -167,7 +175,14 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
           <div className="flex items-center gap-2">
             <Bot size={18} className="text-accent" />
             {currentModel ? (
-              <span className="text-sm font-medium text-zinc-200">{currentModel.id}</span>
+              <div className="flex items-baseline gap-2">
+                <span className="text-sm font-medium text-zinc-200">
+                  {getModelTagline(currentModel.id) ?? currentModel.id}
+                </span>
+                {getModelTagline(currentModel.id) && (
+                  <span className="text-xs text-zinc-500">{currentModel.id}</span>
+                )}
+              </div>
             ) : (
               <span className="text-sm text-zinc-500">No model selected</span>
             )}
@@ -317,8 +332,11 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
                         `}
                       >
                         <div>
-                          <div className="text-sm font-medium text-zinc-200">{m.id}</div>
+                          <div className="text-sm font-medium text-zinc-200">
+                            {getModelTagline(m.id) ?? m.id}
+                          </div>
                           <div className="text-xs text-zinc-500">
+                            {getModelTagline(m.id) && <span>{m.id} · </span>}
                             {m.size_gb} GB · {m.backend}
                           </div>
                         </div>
@@ -358,8 +376,8 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
                               className="flex items-center justify-between bg-surface-2 rounded-xl px-3 py-2.5 border border-zinc-800"
                             >
                               <div className="flex-1 min-w-0">
-                                <div className="text-sm text-zinc-200 truncate">{model.label}</div>
-                                <div className="text-xs text-zinc-500">{model.size_gb} GB</div>
+                                <div className="text-sm text-zinc-200 truncate">{model.tagline}</div>
+                                <div className="text-xs text-zinc-500">{model.label} · {model.size_gb} GB</div>
                               </div>
                               {isInstalled ? (
                                 <span className="text-xs text-green-400 ml-2">Installed</span>
