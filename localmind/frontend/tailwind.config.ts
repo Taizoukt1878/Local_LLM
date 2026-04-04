@@ -16,6 +16,12 @@ export default {
           DEFAULT: "#6366f1",
           hover: "#4f46e5",
         },
+        fg: {
+          base:  "var(--color-fg-base)",
+          soft:  "var(--color-fg-soft)",
+          muted: "var(--color-fg-muted)",
+        },
+        stroke: "var(--color-stroke)",
       },
     },
   },

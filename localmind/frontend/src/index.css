@@ -10,6 +10,11 @@
     --color-surface-2: #e4e4e7;
     --color-surface-3: #d4d4d8;
     --color-text-base: #18181b;
+    --color-fg-base:      #18181b;
+    --color-fg-soft:      #52525b;
+    --color-fg-muted:     #a1a1aa;
+    --color-stroke:       #d4d4d8;
+    --font-body: ui-rounded, "Helvetica Neue", Arial, sans-serif;
   }
 
   /* ── Dark theme ── */
@@ -19,13 +24,18 @@
     --color-surface-2: #27272a;
     --color-surface-3: #3f3f46;
     --color-text-base: #f4f4f5;
+    --color-fg-base:      #f4f4f5;
+    --color-fg-soft:      #a1a1aa;
+    --color-fg-muted:     #52525b;
+    --color-stroke:       #3f3f46;
+    --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, sans-serif;
   }
 
   body {
     background-color: var(--color-surface);
-    color: var(--color-text-base);
+    color: var(--color-fg-base);
     @apply antialiased;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: var(--font-body);
   }
   * {
     @apply box-border;
