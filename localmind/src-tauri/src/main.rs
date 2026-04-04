@@ -1,8 +1,6 @@
 // Prevents additional console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::process::Command;
-use tauri::Manager;
 use tauri_plugin_shell::ShellExt;
 
 fn main() {
