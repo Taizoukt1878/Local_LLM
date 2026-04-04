@@ -59,6 +59,7 @@ async def install_ollama() -> AsyncGenerator[dict, None]:
     Generator that yields progress dicts and installs Ollama for the current platform.
     Yields: {"stage": str, "percent": int, "message": str}
     Final event: {"done": True}
+    Error event: {"stage": "error", "message": str, "retryable": bool}
     """
     system = platform.system()
 
@@ -79,12 +80,27 @@ async def install_ollama() -> AsyncGenerator[dict, None]:
             yield {"stage": "installing", "percent": 50, "message": line.decode().strip()}
         await proc.wait()
         if proc.returncode != 0:
-            yield {"stage": "error", "percent": 0, "message": "Installation failed. Please install Ollama manually."}
+            yield {
+                "stage": "error",
+                "percent": 0,
+                "message": "Installation failed. Please install Ollama manually from ollama.com.",
+                "retryable": True,
+            }
             return
 
     elif system == "Darwin":
         with tempfile.TemporaryDirectory() as tmpdir:
             zip_path = Path(tmpdir) / "Ollama-darwin.zip"
+
+            yield {
+                "stage": "permission_prompt",
+                "percent": 0,
+                "message": (
+                    "We'll ask for your permission to install Ollama — "
+                    "this is a one-time setup. Click Allow when prompted."
+                ),
+            }
+
             yield {"stage": "downloading", "percent": 0, "message": "Downloading Ollama for macOS..."}
             async for progress in _download_file(OLLAMA_MACOS_URL, zip_path):
                 yield {**progress, "message": f"Downloading... {progress['percent']}%"}
@@ -99,14 +115,36 @@ async def install_ollama() -> AsyncGenerator[dict, None]:
 
             app_src = Path(tmpdir) / "Ollama.app"
             app_dst = Path("/Applications/Ollama.app")
-            if app_src.exists():
+
+            if not app_src.exists():
+                yield {
+                    "stage": "error",
+                    "percent": 0,
+                    "message": "Download appears corrupted. Please try again.",
+                    "retryable": True,
+                }
+                return
+
+            try:
                 if app_dst.exists():
                     shutil.rmtree(app_dst)
                 shutil.move(str(app_src), str(app_dst))
+            except PermissionError:
+                yield {
+                    "stage": "error",
+                    "percent": 0,
+                    "message": (
+                        "We need permission to install Ollama. "
+                        "Please try again and click Allow when macOS asks."
+                    ),
+                    "retryable": True,
+                }
+                return
 
     elif system == "Windows":
         with tempfile.TemporaryDirectory() as tmpdir:
             exe_path = Path(tmpdir) / "OllamaSetup.exe"
+
             yield {"stage": "downloading", "percent": 0, "message": "Downloading Ollama for Windows..."}
             async for progress in _download_file(OLLAMA_WINDOWS_URL, exe_path):
                 yield {**progress, "message": f"Downloading... {progress['percent']}%"}
@@ -118,8 +156,25 @@ async def install_ollama() -> AsyncGenerator[dict, None]:
                 stderr=asyncio.subprocess.DEVNULL,
             )
             await proc.wait()
+
+            if proc.returncode != 0:
+                yield {
+                    "stage": "error",
+                    "percent": 0,
+                    "message": (
+                        "We need permission to install Ollama. "
+                        "Please try again and click Allow when Windows asks."
+                    ),
+                    "retryable": True,
+                }
+                return
     else:
-        yield {"stage": "error", "percent": 0, "message": f"Unsupported platform: {system}"}
+        yield {
+            "stage": "error",
+            "percent": 0,
+            "message": f"Unsupported platform: {system}",
+            "retryable": False,
+        }
         return
 
     yield {"stage": "done", "percent": 100, "message": "Ollama installed successfully!"}
