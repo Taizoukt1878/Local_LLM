@@ -5,6 +5,7 @@ Output: src-tauri/binaries/localmind-backend-<target-triple>[.exe]
 Usage:
     python build_backend.py
 """
+import importlib.util
 import platform
 import subprocess
 import sys
@@ -19,7 +20,6 @@ def target_triple() -> str:
     system = platform.system()
     machine = platform.machine().lower()
 
-    # Normalise arm64 → aarch64
     if machine in ("arm64", "aarch64"):
         arch = "aarch64"
     elif machine in ("amd64", "x86_64"):
@@ -31,8 +31,12 @@ def target_triple() -> str:
         return f"{arch}-apple-darwin"
     if system == "Windows":
         return f"{arch}-pc-windows-msvc"
-    # Linux
     return f"{arch}-unknown-linux-gnu"
+
+
+def has_llama_cpp() -> bool:
+    """Return True if llama-cpp-python is importable."""
+    return importlib.util.find_spec("llama_cpp") is not None
 
 
 def main() -> None:
@@ -46,22 +50,19 @@ def main() -> None:
     print(f"Binary name   : {binary_name}")
     print(f"Output dir    : {BINARIES_DIR}")
 
+    # ── Base PyInstaller command ──────────────────────────────────────────
+    sep = ";" if platform.system() == "Windows" else ":"
     cmd = [
         sys.executable,
         "-m",
         "PyInstaller",
         "--onefile",
-        "--name",
-        binary_name,
-        "--distpath",
-        str(BINARIES_DIR),
-        "--workpath",
-        str(ROOT / "build" / "pyinstaller-work"),
-        "--specpath",
-        str(ROOT / "build"),
-        "--add-data",
-        f"{ROOT / 'models.json'}{':' if platform.system() != 'Windows' else ';'}.",
-        # Hidden imports needed by FastAPI / uvicorn
+        "--name", binary_name,
+        "--distpath", str(BINARIES_DIR),
+        "--workpath", str(ROOT / "build" / "pyinstaller-work"),
+        "--specpath", str(ROOT / "build"),
+        "--add-data", f"{ROOT / 'models.json'}{sep}.",
+        # FastAPI / uvicorn hidden imports
         "--hidden-import", "uvicorn.logging",
         "--hidden-import", "uvicorn.loops",
         "--hidden-import", "uvicorn.loops.auto",
@@ -76,9 +77,25 @@ def main() -> None:
         "--hidden-import", "pydantic",
         "--hidden-import", "GPUtil",
         "--hidden-import", "psutil",
-        str(BACKEND_DIR / "main.py"),
     ]
 
+    # ── llama-cpp-python (optional) ───────────────────────────────────────
+    if has_llama_cpp():
+        print("llama-cpp-python found — bundling CPU backend.")
+        cmd += [
+            "--collect-all", "llama_cpp",
+            "--hidden-import", "llama_cpp",
+            "--hidden-import", "llama_cpp.llama_cpp",
+        ]
+    else:
+        print(
+            "WARNING: llama-cpp-python not found, building without CPU backend. "
+            "Install it with: pip install llama-cpp-python"
+        )
+
+    cmd.append(str(BACKEND_DIR / "main.py"))
+
+    # ── Run PyInstaller ───────────────────────────────────────────────────
     print("\nRunning PyInstaller...\n")
     result = subprocess.run(cmd, cwd=str(BACKEND_DIR))
     if result.returncode != 0:
