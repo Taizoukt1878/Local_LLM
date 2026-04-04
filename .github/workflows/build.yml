@@ -3,91 +3,80 @@ name: Build LocalMind
 on:
   push:
     tags:
-      - "v*"        # Triggers when you push a tag like v1.0.0, v1.0.1, etc.
-  workflow_dispatch: # Also allows you to trigger the workflow manually from GitHub UI
+      - "v*"
+  workflow_dispatch:
 
 jobs:
-
-  # ─────────────────────────────────────────────────────────────
-  # JOB 1 — Build the app on macOS Apple Silicon
-  # ─────────────────────────────────────────────────────────────
   build-macos:
     name: Build (macOS Apple Silicon)
-    runs-on: macos-14  # macos-14 guarantees Apple Silicon (M1) runner
+    runs-on:  macos-14
+
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4  # Downloads your repo code onto the runner
+        uses: actions/checkout@v4
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"   # Installs Python 3.10 on the runner
+          python-version: "3.10"
 
       - name: Set up Rust stable
-        uses: dtolnay/rust-toolchain@stable  # Installs Rust (needed to compile Tauri)
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Set up Node.js 18
         uses: actions/setup-node@v4
         with:
-          node-version: "18"       # Installs Node.js (needed to build the React frontend)
+          node-version: "18"
 
-      # Caching speeds up future runs by reusing previously downloaded packages
       - name: Cache Rust
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry      # Cached Rust crates (packages)
+            ~/.cargo/registry
             ~/.cargo/git
-            localmind/src-tauri/target  # Compiled Rust artifacts
+            localmind/src-tauri/target
           key: macos-rust-${{ hashFiles('localmind/src-tauri/Cargo.lock') }}
           restore-keys: macos-rust-
 
       - name: Cache Node modules
         uses: actions/cache@v4
         with:
-          path: localmind/frontend/node_modules  # Cached npm packages
+          path: localmind/frontend/node_modules
           key: macos-node-${{ hashFiles('localmind/frontend/package-lock.json') }}
           restore-keys: macos-node-
 
       - name: Cache pip
         uses: actions/cache@v4
         with:
-          path: ~/Library/Caches/pip  # Cached Python packages (macOS pip cache location)
+          path: ~/Library/Caches/pip
           key: macos-pip-${{ hashFiles('localmind/backend/requirements.txt') }}
           restore-keys: macos-pip-
 
       - name: Install frontend dependencies
-        run: cd localmind/frontend && npm install  # Installs React/Vite packages
+        run: cd localmind/frontend && npm install
 
       - name: Install Python dependencies
         run: cd localmind && pip install -r backend/requirements.txt pyinstaller
-        # Installs FastAPI, uvicorn, psutil etc. + PyInstaller for bundling
 
       - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2"  # Installs the Tauri build tool
+        run: cargo install tauri-cli --version "^2"
 
       - name: Build Python sidecar
         run: cd localmind && python build_backend.py
-        # Runs PyInstaller → produces localmind-backend-aarch64-apple-darwin binary
 
       - name: Build Tauri app
         run: cd localmind && cargo tauri build
-        # Compiles Rust shell + bundles frontend + sidecar → produces .dmg
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
           path: localmind/src-tauri/target/release/bundle/dmg/*.dmg
-          # Saves the .dmg so the release job can attach it to the GitHub Release
 
-  # ─────────────────────────────────────────────────────────────
-  # JOB 2 — Build the app on Windows
-  # ─────────────────────────────────────────────────────────────
   build-windows:
     name: Build (Windows)
-    runs-on: windows-latest  # Spins up a Windows Server runner
+    runs-on: windows-latest
 
     steps:
       - name: Checkout
@@ -126,7 +115,7 @@ jobs:
       - name: Cache pip
         uses: actions/cache@v4
         with:
-          path: ~\AppData\Local\pip\Cache  # Windows pip cache location (different from macOS)
+          path: ~\AppData\Local\pip\Cache
           key: windows-pip-${{ hashFiles('localmind/backend/requirements.txt') }}
           restore-keys: windows-pip-
 
@@ -141,32 +130,25 @@ jobs:
 
       - name: Build Python sidecar
         run: cd localmind && python build_backend.py
-        # Produces localmind-backend-x86_64-pc-windows-msvc.exe
 
       - name: Build Tauri app
         run: cd localmind && cargo tauri build
-        # Produces both .msi and .exe installers for Windows
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-msi
           path: localmind/src-tauri/target/release/bundle/msi/*.msi
-          # .msi = Windows Installer format (more enterprise friendly)
 
       - name: Upload NSIS installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-nsis
           path: localmind/src-tauri/target/release/bundle/nsis/*.exe
-          # .exe = NSIS installer (simpler, most users prefer this)
 
-  # ─────────────────────────────────────────────────────────────
-  # JOB 3 — Build the app on Linux
-  # ─────────────────────────────────────────────────────────────
   build-linux:
     name: Build (Linux)
-    runs-on: ubuntu-22.04  # Spins up an Ubuntu 22.04 runner
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout
@@ -176,12 +158,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \  # WebKit engine (Tauri uses this to render the UI on Linux)
-            libappindicator3-dev \   # System tray support
-            librsvg2-dev \           # SVG rendering
-            patchelf \               # Tool to modify ELF binaries (needed by PyInstaller on Linux)
-            libgtk-3-dev             # GTK3 (window manager integration)
-          # These are Linux-only requirements — macOS and Windows have these built in
+            libwebkit2gtk-4.0-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev || true
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
@@ -216,7 +200,7 @@ jobs:
       - name: Cache pip
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pip  # Linux pip cache location
+          path: ~/.cache/pip
           key: linux-pip-${{ hashFiles('localmind/backend/requirements.txt') }}
           restore-keys: linux-pip-
 
@@ -231,59 +215,49 @@ jobs:
 
       - name: Build Python sidecar
         run: cd localmind && python build_backend.py
-        # Produces localmind-backend-x86_64-unknown-linux-gnu
 
       - name: Build Tauri app
         run: cd localmind && cargo tauri build
-        # Produces .AppImage and .deb packages
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
           name: linux-appimage
           path: localmind/src-tauri/target/release/bundle/appimage/*.AppImage
-          # .AppImage = portable format, runs on any Linux distro without installing
 
       - name: Upload DEB artifact
         uses: actions/upload-artifact@v4
         with:
           name: linux-deb
           path: localmind/src-tauri/target/release/bundle/deb/*.deb
-          # .deb = Debian/Ubuntu package format, installs via apt
 
-  # ─────────────────────────────────────────────────────────────
-  # JOB 4 — Collect all built files and create a GitHub Release
-  # Runs only after all 3 build jobs succeed
-  # ─────────────────────────────────────────────────────────────
   release:
     name: Create GitHub Release
-    needs: [build-macos, build-windows, build-linux]  # Waits for all 3 jobs to finish
+    needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Required to create a release and upload files
+      contents: write
 
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts  # Downloads all 5 files into an artifacts/ folder
+          path: artifacts
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: LocalMind ${{ github.ref_name }}  # e.g. "LocalMind v1.0.1"
+          name: LocalMind ${{ github.ref_name }}
           body: |
             Download the right file for your platform:
             - macOS: .dmg
             - Windows: .exe or .msi
             - Linux: .AppImage or .deb
           files: |
-            artifacts/macos-dmg/*.dmg        # Mac installer
-            artifacts/windows-msi/*.msi      # Windows installer (MSI format)
-            artifacts/windows-nsis/*.exe     # Windows installer (EXE format)
-            artifacts/linux-appimage/*.AppImage  # Linux portable app
-            artifacts/linux-deb/*.deb        # Linux Debian package
+            artifacts/macos-dmg/*.dmg
+            artifacts/windows-msi/*.msi
+            artifacts/windows-nsis/*.exe
+            artifacts/linux-appimage/*.AppImage
+            artifacts/linux-deb/*.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # GitHub automatically provides this token — no setup needed
-          # It's used to authenticate and create the release on your behalf
