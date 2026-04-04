@@ -41,4 +41,4 @@ frontend/.vite/
 *.swp
 
 # Icons (regenerated via `cargo tauri icon localmind_icon.png`)
-localmind/src-tauri/icons/
+# localmind/src-tauri/icons/
