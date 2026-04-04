@@ -3,8 +3,28 @@
 @tailwind utilities;
 
 @layer base {
+  /* ── Light theme (default) ── */
+  :root {
+    --color-surface:   #f4f4f5;
+    --color-surface-1: #ffffff;
+    --color-surface-2: #e4e4e7;
+    --color-surface-3: #d4d4d8;
+    --color-text-base: #18181b;
+  }
+
+  /* ── Dark theme ── */
+  .dark {
+    --color-surface:   #0f0f10;
+    --color-surface-1: #18181b;
+    --color-surface-2: #27272a;
+    --color-surface-3: #3f3f46;
+    --color-text-base: #f4f4f5;
+  }
+
   body {
-    @apply bg-surface text-zinc-100 antialiased;
+    background-color: var(--color-surface);
+    color: var(--color-text-base);
+    @apply antialiased;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
   * {
@@ -17,6 +37,7 @@
     @apply bg-transparent;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-surface-3 rounded-full;
+    background-color: var(--color-surface-3);
+    @apply rounded-full;
   }
 }

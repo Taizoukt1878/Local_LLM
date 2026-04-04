@@ -6,16 +6,14 @@ import Chat from "./pages/Chat";
 import ModelPicker from "./pages/ModelPicker";
 import { getInstallStatus } from "./api";
 
+
 const ONBOARDING_KEY = "localmind_onboarding_done";
 
 export default function App() {
   const navigate = useNavigate();
   const [ready, setReady] = useState(false);
   const [onboardingDone, setOnboardingDone] = useState(false);
-  const [darkMode, setDarkMode] = useState(() => {
-    document.documentElement.classList.add("dark");
-    return true;
-  });
+  const [darkMode, setDarkMode] = useState(true);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
