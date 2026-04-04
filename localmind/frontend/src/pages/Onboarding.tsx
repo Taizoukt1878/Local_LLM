@@ -88,6 +88,9 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [hardware, setHardware] = useState<HardwareProfile | null>(null);
   const [installProgress, setInstallProgress] = useState(0);
   const [installMessage, setInstallMessage] = useState("");
+  const [installFailed, setInstallFailed] = useState(false);
+  const [installRetryable, setInstallRetryable] = useState(false);
+  const [permissionPrompt, setPermissionPrompt] = useState(false);
   const [catalog, setCatalog] = useState<Record<string, TierData>>({});
   const [selectedTier, setSelectedTier] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
@@ -128,15 +131,31 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   const runOllamaInstall = useCallback(() => {
     setInstallProgress(0);
     setInstallMessage("Starting...");
+    setInstallFailed(false);
+    setInstallRetryable(false);
+    setPermissionPrompt(false);
+    setError(null);
+
     const cleanup = streamOllamaInstall((event) => {
+      if (event.stage === "permission_prompt") {
+        setPermissionPrompt(true);
+        setInstallMessage(event.message as string);
+        return;
+      }
       if (event.percent !== undefined) setInstallProgress(event.percent as number);
       if (event.message) setInstallMessage(event.message as string);
+      if (event.stage === "downloading" || event.stage === "installing") {
+        setPermissionPrompt(false);
+      }
+      if (event.stage === "error") {
+        setInstallFailed(true);
+        setInstallRetryable((event.retryable as boolean) ?? false);
+        setError(event.message as string);
+        cleanup();
+      }
       if (event.done) {
         cleanup();
         setStep("hardware");
-      }
-      if (event.stage === "error") {
-        setError(event.message as string);
       }
     });
   }, []);
@@ -284,6 +303,8 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   }
 
   if (step === "install") {
+    const idle = installProgress === 0 && !installFailed;
+
     return (
       <div className="min-h-screen flex flex-col items-center justify-center px-8 gap-8 max-w-lg mx-auto w-full">
         <div className="text-center">
@@ -294,24 +315,43 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
           </p>
         </div>
 
-        {installProgress === 0 ? (
+        {/* Permission prompt banner */}
+        {permissionPrompt && !installFailed && (
+          <div className="flex items-start gap-3 bg-amber-400/10 border border-amber-400/30 rounded-xl px-4 py-3 w-full">
+            <AlertCircle size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-amber-200">{installMessage}</p>
+          </div>
+        )}
+
+        {idle ? (
           <button
             onClick={runOllamaInstall}
             className="flex items-center gap-2 bg-accent hover:bg-accent-hover text-white font-medium px-8 py-3 rounded-xl transition-colors"
           >
             Install Now <ChevronRight size={18} />
           </button>
-        ) : (
+        ) : !installFailed ? (
           <div className="w-full space-y-3">
             <ProgressBar percent={installProgress} />
             <p className="text-sm text-zinc-400 text-center">{installMessage}</p>
           </div>
-        )}
+        ) : null}
 
-        {error && (
-          <div className="flex items-center gap-2 text-red-400 text-sm bg-red-400/10 rounded-xl px-4 py-3 w-full">
-            <AlertCircle size={16} />
-            <span>{error}</span>
+        {/* Error + optional retry */}
+        {error && installFailed && (
+          <div className="w-full space-y-3">
+            <div className="flex items-start gap-2 text-red-400 text-sm bg-red-400/10 rounded-xl px-4 py-3">
+              <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+              <span>{error}</span>
+            </div>
+            {installRetryable && (
+              <button
+                onClick={runOllamaInstall}
+                className="w-full flex items-center justify-center gap-2 bg-accent hover:bg-accent-hover text-white font-medium px-8 py-3 rounded-xl transition-colors"
+              >
+                Try Again <ChevronRight size={18} />
+              </button>
+            )}
           </div>
         )}
       </div>
