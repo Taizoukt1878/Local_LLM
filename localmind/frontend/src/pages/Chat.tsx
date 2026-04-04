@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Send,
   Plus,
@@ -10,6 +11,7 @@ import {
   Trash2,
   AlertCircle,
   Bot,
+  RotateCcw,
 } from "lucide-react";
 import { streamChat, getInstalledModels, deleteModel, getCatalog, streamModelPull } from "../api";
 import ChatMessage from "../components/ChatMessage";
@@ -64,6 +66,7 @@ function prepareHistory(
 }
 
 export default function Chat({ darkMode, onToggleDark }: Props) {
+  const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -189,6 +192,11 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
     }
   };
 
+  const handleResetOnboarding = () => {
+    localStorage.removeItem("onboardingComplete");
+    navigate("/onboarding", { replace: true });
+  };
+
   const getModelTagline = (id: string) => {
     for (const tier of Object.values(catalog)) {
       const match = tier.models.find((m) => m.id === id);
@@ -252,16 +260,31 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
               <div className="w-14 h-14 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
                 <Bot size={24} className="text-accent" />
               </div>
-              <div>
-                <h2 className="text-lg font-semibold text-fg-base">
-                  {currentModel ? "Start a conversation" : "No model selected"}
-                </h2>
-                <p className="text-sm text-fg-muted mt-1">
-                  {currentModel
-                    ? "Ask anything — everything runs privately on your computer."
-                    : "Open settings to choose or download a model."}
-                </p>
-              </div>
+              {!loadingModels && installedModels.length === 0 ? (
+                <div>
+                  <h2 className="text-lg font-semibold text-fg-base">No models installed</h2>
+                  <p className="text-sm text-fg-muted mt-1">
+                    You need at least one model to start chatting.{" "}
+                    <button
+                      onClick={handleResetOnboarding}
+                      className="text-accent hover:underline"
+                    >
+                      Click here to set up.
+                    </button>
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <h2 className="text-lg font-semibold text-fg-base">
+                    {currentModel ? "Start a conversation" : "No model selected"}
+                  </h2>
+                  <p className="text-sm text-fg-muted mt-1">
+                    {currentModel
+                      ? "Ask anything — everything runs privately on your computer."
+                      : "Open settings to choose or download a model."}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -337,7 +360,7 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
               </button>
             </div>
 
-            <div className="flex-1 px-5 py-5 space-y-6">
+            <div className="flex-1 px-5 py-5 space-y-6 flex flex-col">
               {/* Installed models */}
               <section>
                 <h3 className="text-xs font-semibold text-fg-muted uppercase tracking-wider mb-3">
@@ -386,6 +409,17 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
                     ))}
                   </div>
                 )}
+              </section>
+
+              {/* Reset onboarding */}
+              <section className="mt-auto pt-4 border-t border-stroke">
+                <button
+                  onClick={handleResetOnboarding}
+                  className="flex items-center gap-2 w-full text-sm text-fg-soft hover:text-red-400 hover:bg-red-500/10 px-3 py-2.5 rounded-xl transition-colors"
+                >
+                  <RotateCcw size={14} />
+                  Reset &amp; restart setup
+                </button>
               </section>
 
               {/* Download more */}

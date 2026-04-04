@@ -4,14 +4,15 @@ import { Loader2 } from "lucide-react";
 import Onboarding from "./pages/Onboarding";
 import Chat from "./pages/Chat";
 import ModelPicker from "./pages/ModelPicker";
-import { getInstallStatus } from "./api";
+import { getInstallStatus, getInstalledModels, waitForBackend } from "./api";
 
 
-const ONBOARDING_KEY = "localmind_onboarding_done";
+const ONBOARDING_KEY = "onboardingComplete";
 
 export default function App() {
   const navigate = useNavigate();
   const [ready, setReady] = useState(false);
+  const [fatalError, setFatalError] = useState<string | null>(null);
   const [onboardingDone, setOnboardingDone] = useState(false);
   const [darkMode, setDarkMode] = useState(true);
 
@@ -24,6 +25,14 @@ export default function App() {
   // removed (e.g. fresh OS, new machine), send them back through the flow.
   useEffect(() => {
     const checkOnLaunch = async () => {
+      try {
+        await waitForBackend();
+      } catch {
+        setFatalError("Something went wrong starting the app. Please restart.");
+        setReady(true);
+        return;
+      }
+
       const wasOnboarded = localStorage.getItem(ONBOARDING_KEY) === "true";
 
       if (!wasOnboarded) {
@@ -32,8 +41,11 @@ export default function App() {
       }
 
       try {
-        const status = await getInstallStatus();
-        if (!status.installed) {
+        const [status, models] = await Promise.all([
+          getInstallStatus(),
+          getInstalledModels(),
+        ]);
+        if (!status.installed || models.length === 0) {
           localStorage.removeItem(ONBOARDING_KEY);
           setOnboardingDone(false);
         } else {
@@ -60,6 +72,14 @@ export default function App() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-surface">
         <Loader2 size={32} className="text-accent animate-spin" />
+      </div>
+    );
+  }
+
+  if (fatalError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-surface">
+        <p className="text-red-500 text-sm">{fatalError}</p>
       </div>
     );
   }

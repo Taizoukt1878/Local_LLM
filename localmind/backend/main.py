@@ -28,15 +28,16 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[type-arg]
-    # 1. Check Ollama
+    # 1. Check Ollama (non-blocking Popen)
     if installer.is_ollama_installed():
         logger.info("Ollama found — starting serve.")
         installer.start_ollama_serve()
     else:
         logger.warning("Ollama not found; install flow required.")
 
-    # 2. Load model catalog
-    await catalog.fetch_catalog()
+    # 2. Fetch model catalog in the background so the server is immediately
+    #    ready to serve /health without waiting for the network call.
+    asyncio.create_task(catalog.fetch_catalog())
 
     yield  # app runs here
 
@@ -237,4 +238,6 @@ async def chat_endpoint(req: ChatRequest) -> StreamingResponse:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8765, log_level="info")
+    # Use the app object directly instead of a string import — string-based
+    # module references break in PyInstaller frozen executables.
+    uvicorn.run(app, host="127.0.0.1", port=8765, log_level="info")

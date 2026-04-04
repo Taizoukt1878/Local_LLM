@@ -1,5 +1,20 @@
 const BASE = "http://127.0.0.1:8765";
 
+/** Poll GET /health every 500ms for up to 15 seconds. Throws on timeout. */
+export async function waitForBackend(): Promise<void> {
+  const maxAttempts = 30;
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const res = await fetch(`${BASE}/health`);
+      if (res.ok) return;
+    } catch {
+      // not ready yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error("BACKEND_STARTUP_TIMEOUT");
+}
+
 export async function getSystemInfo() {
   let res: Response;
   try {

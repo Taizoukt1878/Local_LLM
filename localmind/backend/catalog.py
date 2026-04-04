@@ -1,12 +1,19 @@
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any
 
 import httpx
 
 REMOTE_CATALOG_URL = "https://your-update-server.com/models.json"
-LOCAL_CATALOG_PATH = Path(__file__).parent.parent / "models.json"
+
+# In a PyInstaller bundle, data files land in sys._MEIPASS.
+# In normal execution they sit two levels up from this file (localmind/models.json).
+if getattr(sys, "frozen", False):
+    LOCAL_CATALOG_PATH = Path(sys._MEIPASS) / "models.json"  # type: ignore[attr-defined]
+else:
+    LOCAL_CATALOG_PATH = Path(__file__).parent.parent / "models.json"
 
 logger = logging.getLogger(__name__)
 
@@ -17,13 +24,17 @@ def _is_llamacpp_available() -> bool:
     try:
         import llama_cpp  # noqa: F401
         return True
-    except ImportError:
+    except Exception:
         return False
 
 
 def _load_local_catalog() -> dict[str, Any]:
-    with LOCAL_CATALOG_PATH.open() as f:
-        return json.load(f)
+    try:
+        with LOCAL_CATALOG_PATH.open() as f:
+            return json.load(f)
+    except Exception:
+        logger.warning("Local catalog not found at %s — returning empty catalog.", LOCAL_CATALOG_PATH)
+        return {}
 
 
 async def fetch_catalog() -> dict[str, Any]:
