@@ -2,38 +2,43 @@
 __pycache__/
 *.py[cod]
 *.pyo
+.localllm/
+venv/
+.venv/
 *.egg-info/
-.env/
-.venv
-*localllm/
 dist/
 build/
-*.spec
-.localllm/
 
-# PyInstaller output
+# PyInstaller
 src-tauri/binaries/
+
+# Rust / Tauri
+target/
+src-tauri/target/
 
 # Node
 node_modules/
+frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 
-# Tauri / Rust
-src-tauri/target/
-src-tauri/WixTools/
+# Models (never commit these — they're huge)
+~/localmind/models/
+*.gguf
+*.bin
 
 # macOS
 .DS_Store
-*.xcuserstate
+*.dmg
 
-# Windows
-Thumbs.db
+# Environment
+.env
+.env.local
 
 # IDE
 .vscode/
 .idea/
 *.swp
-*.swo
 
-# 
+# Icons (regenerated via `cargo tauri icon localmind_icon.png`)
+localmind/src-tauri/icons/
