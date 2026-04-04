@@ -30,6 +30,26 @@ interface Props {
   onToggleDark: () => void;
 }
 
+const SYSTEM_PROMPT =
+  "You are a helpful, accurate, and concise AI assistant running locally on the user's device. " +
+  "Answer only what is asked. Do not invent facts, URLs, file paths, or capabilities you are unsure about. " +
+  "If you don't know something, say so directly.";
+
+const MAX_ASSISTANT_CHARS = 800;
+
+function prepareHistory(
+  messages: Message[],
+  newUserMsg: Message
+): { role: string; content: string }[] {
+  const history = [...messages, newUserMsg];
+  const truncated = history.map((msg) =>
+    msg.role === "assistant" && msg.content.length > MAX_ASSISTANT_CHARS
+      ? { ...msg, content: msg.content.slice(0, MAX_ASSISTANT_CHARS) + " […]" }
+      : msg
+  );
+  return [{ role: "system", content: SYSTEM_PROMPT }, ...truncated];
+}
+
 export default function Chat({ darkMode, onToggleDark }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -87,7 +107,7 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
     setError(null);
     setStreaming(true);
 
-    const history = [...messages, userMsg];
+    const payload = prepareHistory(messages, userMsg);
     let assistantContent = "";
 
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
@@ -95,7 +115,7 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
     cleanupRef.current = streamChat(
       currentModel.id,
       currentModel.backend,
-      history,
+      payload,
       (token) => {
         assistantContent += token;
         setMessages((prev) => {
