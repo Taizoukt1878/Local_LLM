@@ -13,6 +13,7 @@ export default function App() {
   const navigate = useNavigate();
   const [ready, setReady] = useState(false);
   const [fatalError, setFatalError] = useState<string | null>(null);
+  const [startupMessage, setStartupMessage] = useState("Starting LocalMind...");
   const [onboardingDone, setOnboardingDone] = useState(false);
   const [darkMode, setDarkMode] = useState(true);
 
@@ -25,10 +26,16 @@ export default function App() {
   // removed (e.g. fresh OS, new machine), send them back through the flow.
   useEffect(() => {
     const checkOnLaunch = async () => {
+      const slowStartTimeout = setTimeout(() => {
+        setStartupMessage("Taking a little longer than usual on Windows, please wait...");
+      }, 10000);
+
       try {
         await waitForBackend();
+        clearTimeout(slowStartTimeout);
       } catch {
-        setFatalError("Something went wrong starting the app. Please restart.");
+        clearTimeout(slowStartTimeout);
+        setFatalError("Could not start the app backend. Please restart.");
         setReady(true);
         return;
       }
@@ -70,8 +77,9 @@ export default function App() {
 
   if (!ready) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-surface">
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-surface">
         <Loader2 size={32} className="text-accent animate-spin" />
+        <p className="text-sm text-muted">{startupMessage}</p>
       </div>
     );
   }
