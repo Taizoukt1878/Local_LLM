@@ -4,6 +4,10 @@ LocalMind FastAPI backend — runs as a sidecar on localhost:8765.
 import asyncio
 import json
 import logging
+import platform
+import socket
+import subprocess
+import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 
@@ -22,6 +26,59 @@ import ollama_backend
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Stale process cleanup helpers
+# ---------------------------------------------------------------------------
+
+def _is_port_in_use(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _free_port(port: int) -> None:
+    """Kill the process holding *port*, then wait 1 second."""
+    if not _is_port_in_use(port):
+        return
+    try:
+        system = platform.system()
+        if system == "Windows":
+            result = subprocess.run(
+                ["netstat", "-ano"], capture_output=True, text=True
+            )
+            pid = None
+            for line in result.stdout.splitlines():
+                if f":{port}" in line and "LISTENING" in line:
+                    parts = line.strip().split()
+                    if parts:
+                        pid = parts[-1]
+                        break
+            if pid:
+                subprocess.run(["taskkill", "/PID", pid, "/F"], capture_output=True)
+        else:
+            result = subprocess.run(
+                ["lsof", "-ti", f":{port}"], capture_output=True, text=True
+            )
+            pid = result.stdout.strip()
+            if pid:
+                subprocess.run(["kill", "-9", pid], capture_output=True)
+        time.sleep(1)
+    except Exception:
+        logger.warning("_free_port(%d) failed — continuing anyway", port)
+
+
+def _free_ollama_process() -> None:
+    """Kill any running ollama process, then wait 2 seconds."""
+    try:
+        system = platform.system()
+        if system == "Windows":
+            subprocess.run(["taskkill", "/IM", "ollama.exe", "/F"], capture_output=True)
+        else:
+            subprocess.run(["pkill", "-f", "ollama"], capture_output=True)
+        time.sleep(2)
+    except Exception:
+        logger.warning("_free_ollama_process() failed — continuing anyway")
+
 # ---------------------------------------------------------------------------
 # App lifecycle
 # ---------------------------------------------------------------------------
@@ -30,7 +87,9 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     # 1. Check Ollama (non-blocking Popen)
     if installer.is_ollama_installed():
-        logger.info("Ollama found — starting serve.")
+        logger.info("Ollama found — cleaning up stale process then starting serve.")
+        _free_ollama_process()
+        _free_port(11434)
         installer.start_ollama_serve()
     else:
         logger.warning("Ollama not found; install flow required.")
@@ -238,6 +297,8 @@ async def chat_endpoint(req: ChatRequest) -> StreamingResponse:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    # Free any stale backend process before binding the port.
+    _free_port(8765)
     # Use the app object directly instead of a string import — string-based
     # module references break in PyInstaller frozen executables.
     uvicorn.run(app, host="127.0.0.1", port=8765, log_level="info")

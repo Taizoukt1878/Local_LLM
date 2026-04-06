@@ -83,6 +83,8 @@ function Pill({
 
 type Step = "welcome" | "scanning" | "hardware" | "install" | "pick" | "pulling" | "ready";
 
+const isWindows = /win/i.test(navigator.userAgent) && !/android/i.test(navigator.userAgent);
+
 export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [step, setStep] = useState<Step>("welcome");
   const [hardware, setHardware] = useState<HardwareProfile | null>(null);
@@ -155,7 +157,27 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
       }
       if (event.done) {
         cleanup();
-        setStep("hardware");
+        // Verify Ollama is actually running before proceeding, with retries.
+        (async () => {
+          setInstallMessage("Setting up Ollama, please wait...");
+          await new Promise((r) => setTimeout(r, 3000));
+          for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+              const status = await getInstallStatus();
+              if (status.running) {
+                setStep("hardware");
+                return;
+              }
+            } catch {
+              // not ready yet
+            }
+            if (attempt < 4) {
+              await new Promise((r) => setTimeout(r, 2000));
+            }
+          }
+          // Proceed anyway — Ollama may still be initialising.
+          setStep("hardware");
+        })();
       }
     });
   }, []);
@@ -320,6 +342,16 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
           <div className="flex items-start gap-3 bg-amber-400/10 border border-amber-400/30 rounded-xl px-4 py-3 w-full">
             <AlertCircle size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
             <p className="text-sm text-amber-200">{installMessage}</p>
+          </div>
+        )}
+
+        {/* Windows-specific security prompt hint */}
+        {isWindows && !installFailed && installProgress > 0 && (
+          <div className="flex items-start gap-3 bg-blue-400/10 border border-blue-400/30 rounded-xl px-4 py-3 w-full">
+            <AlertCircle size={16} className="text-blue-400 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-blue-200">
+              Windows may show a security prompt — please click <strong>Allow</strong> if asked.
+            </p>
           </div>
         )}
 

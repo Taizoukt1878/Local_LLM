@@ -21,46 +21,63 @@ export default function App() {
     document.documentElement.classList.toggle("dark", darkMode);
   }, [darkMode]);
 
-  // On every launch: verify Ollama is actually still installed.
-  // If the user previously completed onboarding but Ollama has since been
-  // removed (e.g. fresh OS, new machine), send them back through the flow.
+  // On every launch: wait for the backend, then check Ollama + models to
+  // decide whether to resume chat or restart onboarding.
   useEffect(() => {
     const checkOnLaunch = async () => {
-      const slowStartTimeout = setTimeout(() => {
-        setStartupMessage("Taking a little longer than usual on Windows, please wait...");
-      }, 10000);
-
       try {
-        await waitForBackend();
-        clearTimeout(slowStartTimeout);
+        await waitForBackend(() => {
+          setStartupMessage("Taking longer than usual to start, please wait...");
+        });
       } catch {
-        clearTimeout(slowStartTimeout);
-        setFatalError("Could not start the app backend. Please restart.");
+        setFatalError("Please restart the app");
         setReady(true);
         return;
       }
 
-      const wasOnboarded = localStorage.getItem(ONBOARDING_KEY) === "true";
+      console.log('[launch] backend ready');
 
-      if (!wasOnboarded) {
-        setReady(true);
-        return;
-      }
-
+      let status: { installed: boolean; running: boolean };
       try {
-        const [status, models] = await Promise.all([
-          getInstallStatus(),
-          getInstalledModels(),
-        ]);
-        if (!status.installed || models.length === 0) {
-          localStorage.removeItem(ONBOARDING_KEY);
-          setOnboardingDone(false);
-        } else {
-          setOnboardingDone(true);
-        }
+        status = await getInstallStatus();
       } catch {
-        // Backend isn't up yet — onboarding will surface the error gracefully.
+        console.log('[launch] routing to: onboarding (status check failed)');
+        localStorage.removeItem(ONBOARDING_KEY);
         setOnboardingDone(false);
+        setReady(true);
+        return;
+      }
+
+      console.log('[launch] ollama status:', status);
+
+      if (!status.installed) {
+        console.log('[launch] routing to: onboarding (not installed)');
+        localStorage.removeItem(ONBOARDING_KEY);
+        setOnboardingDone(false);
+        setReady(true);
+        return;
+      }
+
+      let models: unknown[];
+      try {
+        models = await getInstalledModels();
+      } catch {
+        console.log('[launch] routing to: onboarding (models check failed)');
+        localStorage.removeItem(ONBOARDING_KEY);
+        setOnboardingDone(false);
+        setReady(true);
+        return;
+      }
+
+      console.log('[launch] models installed:', models);
+
+      if ((models as unknown[]).length === 0) {
+        console.log('[launch] routing to: onboarding (no models)');
+        localStorage.removeItem(ONBOARDING_KEY);
+        setOnboardingDone(false);
+      } else {
+        console.log('[launch] routing to: chat');
+        setOnboardingDone(true);
       }
 
       setReady(true);
