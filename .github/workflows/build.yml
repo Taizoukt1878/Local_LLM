@@ -73,72 +73,6 @@ jobs:
           name: macos-dmg-arm64
           path: localmind/src-tauri/target/release/bundle/dmg/*.dmg
 
-  build-macos-intel:
-    name: Build (macOS Intel)
-    runs-on: macos-13
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Set up Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up Node.js 18
-        uses: actions/setup-node@v4
-        with:
-          node-version: "18"
-
-      - name: Cache Rust
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            localmind/src-tauri/target
-          key: macos-intel-rust-${{ hashFiles('localmind/src-tauri/Cargo.lock') }}
-          restore-keys: macos-intel-rust-
-
-      - name: Cache Node modules
-        uses: actions/cache@v4
-        with:
-          path: localmind/frontend/node_modules
-          key: macos-intel-node-${{ hashFiles('localmind/frontend/package-lock.json') }}
-          restore-keys: macos-intel-node-
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Caches/pip
-          key: macos-intel-pip-${{ hashFiles('localmind/backend/requirements.txt') }}
-          restore-keys: macos-intel-pip-
-
-      - name: Install frontend dependencies
-        run: cd localmind/frontend && npm install
-
-      - name: Install Python dependencies
-        run: cd localmind && pip install -r backend/requirements.txt pyinstaller
-
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2"
-
-      - name: Build Python sidecar
-        run: cd localmind && python build_backend.py
-
-      - name: Build Tauri app
-        run: cd localmind && cargo tauri build
-
-      - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-dmg-x64
-          path: localmind/src-tauri/target/release/bundle/dmg/*.dmg
-
   build-windows:
     name: Build (Windows)
     runs-on: windows-latest
@@ -302,7 +236,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [build-macos, build-macos-intel, build-windows, build-linux]
+    needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
