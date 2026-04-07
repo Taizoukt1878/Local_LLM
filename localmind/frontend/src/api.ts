@@ -1,13 +1,13 @@
 const BASE = "http://127.0.0.1:8765";
 
-/** Poll GET /health every 500ms for up to 20 seconds (40 attempts).
- *  Calls onSlow after 10 seconds (attempt 20) if still not ready.
+/** Poll GET /health every 500ms for up to 60 seconds (120 attempts).
+ *  Calls onSlow after 15 seconds (attempt 30) if still not ready.
  *  Throws after all retries are exhausted. */
 export async function waitForBackend(onSlow?: () => void): Promise<void> {
-  const maxAttempts = 40;
+  const maxAttempts = 120;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     console.log('[health] attempt', attempt);
-    if (attempt === 20 && onSlow) onSlow();
+    if (attempt === 30 && onSlow) onSlow();
     try {
       const res = await fetch(`${BASE}/health`);
       if (res.ok) return;

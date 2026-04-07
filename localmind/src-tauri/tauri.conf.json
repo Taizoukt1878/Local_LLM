@@ -38,7 +38,15 @@
     ],
     "externalBin": [
       "binaries/localmind-backend"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine"
+      }
+    }
   },
   "plugins": {
     "shell": {
