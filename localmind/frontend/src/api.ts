@@ -1,6 +1,10 @@
+import { invoke } from "@tauri-apps/api/core";
+
 const BASE = "http://127.0.0.1:8765";
 
-/** Poll GET /health every 500ms for up to 60 seconds (120 attempts).
+/** Poll the backend port every 500ms for up to 60 seconds (120 attempts).
+ *  Uses a Rust Tauri command for the TCP check so WebView2's loopback
+ *  network-isolation on Windows cannot block it.
  *  Calls onSlow after 15 seconds (attempt 30) if still not ready.
  *  Throws after all retries are exhausted. */
 export async function waitForBackend(onSlow?: () => void): Promise<void> {
@@ -9,8 +13,8 @@ export async function waitForBackend(onSlow?: () => void): Promise<void> {
     console.log('[health] attempt', attempt);
     if (attempt === 30 && onSlow) onSlow();
     try {
-      const res = await fetch(`${BASE}/health`);
-      if (res.ok) return;
+      const alive = await invoke<boolean>("check_backend_health");
+      if (alive) return;
     } catch {
       // not ready yet
     }

@@ -1,16 +1,31 @@
 // Prevents additional console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::net::TcpStream;
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::{async_runtime, Manager};
 use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 
 struct SidecarChild(Mutex<Option<CommandChild>>);
 
+/// Called from the frontend health-poll loop.
+/// Doing the TCP check from Rust bypasses the WebView2 loopback
+/// network-isolation restriction that silently blocks fetch() on Windows.
+#[tauri::command]
+fn check_backend_health() -> bool {
+    TcpStream::connect_timeout(
+        &"127.0.0.1:8765".parse().unwrap(),
+        Duration::from_millis(400),
+    )
+    .is_ok()
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![check_backend_health])
         .setup(|app| {
             let sidecar_command = app
                 .shell()
