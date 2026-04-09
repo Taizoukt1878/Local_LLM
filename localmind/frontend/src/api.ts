@@ -1,10 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
+// tauri-plugin-http routes all HTTP through Rust, bypassing the WebView2
+// loopback network-isolation restriction on Windows.
+import { fetch } from "@tauri-apps/plugin-http";
 
 const BASE = "http://127.0.0.1:8765";
 
 /** Poll the backend port every 500ms for up to 60 seconds (120 attempts).
- *  Uses a Rust Tauri command for the TCP check so WebView2's loopback
- *  network-isolation on Windows cannot block it.
+ *  Uses a Rust TCP command so WebView2's loopback network-isolation on
+ *  Windows cannot interfere with the startup probe.
  *  Calls onSlow after 15 seconds (attempt 30) if still not ready.
  *  Throws after all retries are exhausted. */
 export async function waitForBackend(onSlow?: () => void): Promise<void> {
@@ -60,18 +63,39 @@ export async function deleteModel(name: string, backend: string) {
   if (!res.ok) throw new Error("Failed to delete model");
 }
 
-/** Stream Ollama install progress. Calls onEvent for each SSE data line. */
+/** Stream Ollama install progress. Calls onEvent for each SSE data line.
+ *  Uses fetch instead of EventSource so it routes through Rust and is not
+ *  blocked by WebView2 loopback isolation on Windows. */
 export function streamOllamaInstall(
   onEvent: (data: Record<string, unknown>) => void
 ): () => void {
-  const es = new EventSource(`${BASE}/install/ollama`);
-  es.onmessage = (e) => {
-    try {
-      onEvent(JSON.parse(e.data));
-    } catch (_) {}
+  let closed = false;
+
+  fetch(`${BASE}/install/ollama`).then(async (res) => {
+    const reader = res.body?.getReader();
+    if (!reader) return;
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done || closed) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          try {
+            onEvent(JSON.parse(line.slice(6)));
+          } catch (_) {}
+        }
+      }
+    }
+  });
+
+  return () => {
+    closed = true;
   };
-  es.onerror = () => es.close();
-  return () => es.close();
 }
 
 /** Stream model pull progress. */

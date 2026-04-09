@@ -25,6 +25,7 @@ fn check_backend_health() -> bool {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![check_backend_health])
         .setup(|app| {
             let sidecar_command = app
