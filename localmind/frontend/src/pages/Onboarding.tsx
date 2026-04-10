@@ -84,6 +84,7 @@ function Pill({
 type Step = "welcome" | "scanning" | "hardware" | "install" | "pick" | "pulling" | "ready";
 
 const isWindows = /win/i.test(navigator.userAgent) && !/android/i.test(navigator.userAgent);
+const isLinux = !isWindows && /linux/i.test(navigator.userAgent);
 
 export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [step, setStep] = useState<Step>("welcome");
@@ -99,15 +100,42 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [pullPercent, setPullPercent] = useState(0);
   const [pullStatus, setPullStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [sudoPassword, setSudoPassword] = useState("");
+  const [needsSudo, setNeedsSudo] = useState(false);
 
   // Step: scan hardware
   const runHardwareScan = useCallback(async () => {
     setStep("scanning");
     setError(null);
-    try {
-      const info = await getSystemInfo();
-      setHardware(info);
 
+    // Retry getSystemInfo up to 3 times — the hardware probe can take a few
+    // seconds on first run (subprocess GPU detection) and a single timeout
+    // should not surface as a hard error.
+    let info: Awaited<ReturnType<typeof getSystemInfo>> | null = null;
+    let lastErr: Error | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        info = await getSystemInfo();
+        break;
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+
+    if (!info) {
+      const msg = lastErr?.message ?? "";
+      setError(
+        msg === "BACKEND_OFFLINE"
+          ? "Could not reach the LocalMind service. Please restart the app and try again."
+          : "We couldn't read your computer's specs. Please try again."
+      );
+      setStep("welcome");
+      return;
+    }
+
+    try {
+      setHardware(info);
       const installStatus = await getInstallStatus();
       const cat = await getCatalog();
       setCatalog(cat);
@@ -122,7 +150,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
       const msg = err instanceof Error ? err.message : "";
       setError(
         msg === "BACKEND_OFFLINE"
-          ? "The LocalMind backend isn't running. Start it with: cd backend && python main.py"
+          ? "Could not reach the LocalMind service. Please restart the app and try again."
           : "We couldn't read your computer's specs. Please try again."
       );
       setStep("welcome");
@@ -136,6 +164,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
     setInstallFailed(false);
     setInstallRetryable(false);
     setPermissionPrompt(false);
+    setNeedsSudo(false);
     setError(null);
 
     const cleanup = streamOllamaInstall((event) => {
@@ -153,6 +182,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
         setInstallFailed(true);
         setInstallRetryable((event.retryable as boolean) ?? false);
         setError(event.message as string);
+        if (event.needs_sudo) setNeedsSudo(true);
         cleanup();
       }
       if (event.done) {
@@ -179,8 +209,8 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
           setStep("hardware");
         })();
       }
-    });
-  }, []);
+    }, sudoPassword || undefined);
+  }, [sudoPassword]);
 
   // Step: pull model
   const startPull = useCallback(() => {
@@ -352,6 +382,43 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
             <p className="text-sm text-blue-200">
               Windows may show a security prompt — please click <strong>Allow</strong> if asked.
             </p>
+          </div>
+        )}
+
+        {/* Linux sudo password field */}
+        {isLinux && idle && (
+          <div className="w-full space-y-2">
+            <label className="text-sm text-zinc-400 block">
+              Administrator password{" "}
+              <span className="text-zinc-600">(required to install Ollama)</span>
+            </label>
+            <input
+              type="password"
+              value={sudoPassword}
+              onChange={(e) => setSudoPassword(e.target.value)}
+              placeholder="Enter your sudo password"
+              className="w-full bg-surface-2 border border-zinc-700 rounded-xl px-4 py-2.5 text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-accent text-sm"
+            />
+            <p className="text-xs text-zinc-600">
+              Leave blank if your system is configured for passwordless sudo.
+            </p>
+          </div>
+        )}
+
+        {/* Linux sudo prompt after failed attempt without password */}
+        {isLinux && needsSudo && installFailed && (
+          <div className="w-full space-y-2">
+            <label className="text-sm text-zinc-300 block font-medium">
+              Administrator password required
+            </label>
+            <input
+              type="password"
+              value={sudoPassword}
+              onChange={(e) => setSudoPassword(e.target.value)}
+              placeholder="Enter your sudo password"
+              className="w-full bg-surface-2 border border-accent/50 rounded-xl px-4 py-2.5 text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-accent text-sm"
+              autoFocus
+            />
           </div>
         )}
 

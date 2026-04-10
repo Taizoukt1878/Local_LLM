@@ -1,8 +1,8 @@
 import asyncio
+import os
 import platform
 import shutil
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import AsyncGenerator
@@ -54,12 +54,14 @@ async def _download_file(url: str, dest: Path) -> AsyncGenerator[dict, None]:
                     yield {"stage": "downloading", "percent": pct}
 
 
-async def install_ollama() -> AsyncGenerator[dict, None]:
+async def install_ollama(sudo_password: str | None = None) -> AsyncGenerator[dict, None]:
     """
     Generator that yields progress dicts and installs Ollama for the current platform.
     Yields: {"stage": str, "percent": int, "message": str}
     Final event: {"done": True}
     Error event: {"stage": "error", "message": str, "retryable": bool}
+
+    sudo_password: optional administrator password for Linux installs.
     """
     system = platform.system()
 
@@ -67,24 +69,80 @@ async def install_ollama() -> AsyncGenerator[dict, None]:
 
     if system == "Linux":
         yield {"stage": "downloading", "percent": 10, "message": "Downloading Ollama install script..."}
-        proc = await asyncio.create_subprocess_shell(
-            f"curl -fsSL {OLLAMA_LINUX_INSTALL_SCRIPT} | sh",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        assert proc.stdout is not None
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            yield {"stage": "installing", "percent": 50, "message": line.decode().strip()}
-        await proc.wait()
-        if proc.returncode != 0:
+
+        # Download install script to a temp file so we can feed it to sudo without a TTY
+        tmp_path: str | None = None
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
+                resp = await client.get(OLLAMA_LINUX_INSTALL_SCRIPT)
+                resp.raise_for_status()
+                with tempfile.NamedTemporaryFile(mode="wb", suffix=".sh", delete=False) as f:
+                    f.write(resp.content)
+                    tmp_path = f.name
+        except Exception as exc:
             yield {
                 "stage": "error",
                 "percent": 0,
-                "message": "Installation failed. Please install Ollama manually from ollama.com.",
+                "message": f"Failed to download installer: {exc}",
                 "retryable": True,
+            }
+            return
+
+        yield {"stage": "installing", "percent": 30, "message": "Installing Ollama (this may take a moment)..."}
+
+        try:
+            if sudo_password:
+                # sudo -S reads the password from stdin; the script path is a separate arg
+                # so stdin is fully consumed by sudo before sh starts.
+                proc = await asyncio.create_subprocess_exec(
+                    "sudo", "-S", "sh", tmp_path,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                assert proc.stdin is not None
+                proc.stdin.write((sudo_password + "\n").encode())
+                await proc.stdin.drain()
+                proc.stdin.close()
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    "sh", tmp_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+
+            assert proc.stdout is not None
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                decoded = line.decode(errors="ignore").strip()
+                if decoded:
+                    yield {"stage": "installing", "percent": 50, "message": decoded}
+
+            await proc.wait()
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+
+        if proc.returncode != 0:
+            if sudo_password:
+                msg = "Installation failed. Please check your password and try again."
+            else:
+                msg = (
+                    "Installation failed. "
+                    "Ollama requires administrator privileges — "
+                    "please enter your password and try again."
+                )
+            yield {
+                "stage": "error",
+                "percent": 0,
+                "message": msg,
+                "retryable": True,
+                "needs_sudo": not bool(sudo_password),
             }
             return
 

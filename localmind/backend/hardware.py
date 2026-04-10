@@ -45,19 +45,112 @@ def _get_gpu_info_apple_silicon(ram_gb: float) -> dict:
         }
 
 
+def _get_gpu_info_linux() -> dict:
+    """
+    Detect GPU on Linux using subprocesses so that a crash in a GPU tool
+    (e.g. missing nvidia-ml.so) cannot segfault the backend process.
+    """
+    # NVIDIA via nvidia-smi
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            parts = [p.strip() for p in result.stdout.strip().split("\n")[0].split(",")]
+            if len(parts) >= 2:
+                try:
+                    vram_gb = round(float(parts[1]) / 1024, 1)
+                except ValueError:
+                    vram_gb = 0
+                return {"present": True, "name": parts[0], "vram_gb": vram_gb}
+    except Exception:
+        pass
+
+    # Any GPU visible via lspci (AMD, Intel, etc.)
+    try:
+        result = subprocess.run(["lspci"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                lower = line.lower()
+                if any(kw in lower for kw in ["vga compatible", "3d controller", "display controller"]):
+                    parts = line.split(":", 2)
+                    name = parts[-1].strip() if len(parts) >= 3 else "Unknown GPU"
+                    return {"present": True, "name": name, "vram_gb": 0}
+    except Exception:
+        pass
+
+    return {"present": False, "name": None, "vram_gb": 0}
+
+
+def _get_gpu_info_windows() -> dict:
+    """
+    Detect GPU on Windows using subprocesses with timeouts.
+    GPUtil/nvidia-ml-python can block the asyncio event loop indefinitely;
+    subprocess.run(..., timeout=5) avoids that.
+    """
+    # NVIDIA via nvidia-smi
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            parts = [p.strip() for p in result.stdout.strip().split("\n")[0].split(",")]
+            if len(parts) >= 2:
+                try:
+                    vram_gb = round(float(parts[1]) / 1024, 1)
+                except ValueError:
+                    vram_gb = 0
+                return {"present": True, "name": parts[0], "vram_gb": vram_gb}
+    except Exception:
+        pass
+
+    # Any GPU via wmic (AMD, Intel, etc.)
+    try:
+        result = subprocess.run(
+            ["wmic", "path", "win32_VideoController", "get", "Name,AdapterRAM", "/format:csv"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().splitlines():
+                line = line.strip()
+                if not line or line.startswith("Node"):
+                    continue
+                parts = line.split(",")
+                if len(parts) >= 3:
+                    name = parts[-1].strip()
+                    try:
+                        vram_bytes = int(parts[1].strip())
+                        vram_gb = round(vram_bytes / (1024 ** 3), 1)
+                    except (ValueError, IndexError):
+                        vram_gb = 0
+                    if name:
+                        return {"present": True, "name": name, "vram_gb": vram_gb}
+    except Exception:
+        pass
+
+    return {"present": False, "name": None, "vram_gb": 0}
+
+
 def _get_gpu_info(ram_gb: float) -> dict:
     """
     Detect GPU info.
-    - On macOS Apple Silicon: GPUtil doesn't work; use system_profiler instead.
-    - On other platforms: try GPUtil, fall back to no GPU.
+    - macOS Apple Silicon: system_profiler
+    - Linux: nvidia-smi / lspci subprocesses (avoids GPUtil segfaults)
+    - Windows: nvidia-smi / wmic subprocesses (avoids blocking the event loop)
+    - Other: GPUtil fallback
     """
-    is_apple_silicon = (
-        platform.system() == "Darwin"
-        and platform.machine() == "arm64"
-    )
+    system = platform.system()
 
-    if is_apple_silicon:
+    if system == "Darwin" and platform.machine() == "arm64":
         return _get_gpu_info_apple_silicon(ram_gb)
+
+    if system == "Linux":
+        return _get_gpu_info_linux()
+
+    if system == "Windows":
+        return _get_gpu_info_windows()
 
     try:
         import GPUtil  # type: ignore

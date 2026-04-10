@@ -65,13 +65,19 @@ export async function deleteModel(name: string, backend: string) {
 
 /** Stream Ollama install progress. Calls onEvent for each SSE data line.
  *  Uses fetch instead of EventSource so it routes through Rust and is not
- *  blocked by WebView2 loopback isolation on Windows. */
+ *  blocked by WebView2 loopback isolation on Windows.
+ *  sudoPassword is forwarded to the backend for Linux installs that need sudo. */
 export function streamOllamaInstall(
-  onEvent: (data: Record<string, unknown>) => void
+  onEvent: (data: Record<string, unknown>) => void,
+  sudoPassword?: string,
 ): () => void {
   let closed = false;
 
-  fetch(`${BASE}/install/ollama`).then(async (res) => {
+  fetch(`${BASE}/install/ollama`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sudo_password: sudoPassword ?? null }),
+  }).then(async (res) => {
     const reader = res.body?.getReader();
     if (!reader) return;
     const decoder = new TextDecoder();

@@ -106,7 +106,8 @@ app = FastAPI(title="LocalMind Backend", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "tauri://localhost",
+        "tauri://localhost",        # macOS Tauri
+        "https://tauri.localhost",  # Windows WebView2 / Linux Tauri v2
         "http://localhost",
         "http://localhost:5173",
         "http://localhost:5174",
@@ -159,17 +160,30 @@ async def health() -> dict[str, str]:
 
 @app.get("/system/info")
 async def system_info() -> dict[str, Any]:
+    # Run synchronous hardware probing in a thread so it never blocks the
+    # asyncio event loop (subprocess calls inside can stall for seconds).
+    loop = asyncio.get_event_loop()
     try:
-        return hardware.get_hardware_profile()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, hardware.get_hardware_profile),
+            timeout=15.0,
+        )
+        return result
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail={"message": "Hardware probe timed out"})
     except Exception as exc:
         logger.exception("hardware probe failed")
         raise HTTPException(status_code=500, detail={"message": str(exc)}) from exc
 
 
-@app.get("/install/ollama")
-async def install_ollama_endpoint() -> StreamingResponse:
+class InstallRequest(BaseModel):
+    sudo_password: str | None = None
+
+
+@app.post("/install/ollama")
+async def install_ollama_endpoint(req: InstallRequest = InstallRequest()) -> StreamingResponse:
     return StreamingResponse(
-        _stream_generator(installer.install_ollama()),
+        _stream_generator(installer.install_ollama(sudo_password=req.sudo_password or None)),
         media_type="text/event-stream",
     )
 
