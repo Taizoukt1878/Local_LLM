@@ -40,7 +40,8 @@
       "binaries/localmind-backend"
     ],
     "macOS": {
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "entitlements": "entitlements.macos.plist"
     },
     "windows": {
       "nsis": {
