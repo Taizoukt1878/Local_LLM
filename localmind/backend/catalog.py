@@ -4,10 +4,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import httpx
-
-REMOTE_CATALOG_URL = "https://your-update-server.com/models.json"
-
 # In a PyInstaller bundle, data files land in sys._MEIPASS.
 # In normal execution they sit two levels up from this file (localmind/models.json).
 if getattr(sys, "frozen", False):
@@ -38,20 +34,11 @@ def _load_local_catalog() -> dict[str, Any]:
 
 
 async def fetch_catalog() -> dict[str, Any]:
-    """Fetch catalog from remote, fall back to local bundled file."""
+    """Load catalog from the bundled local file."""
     global _catalog_cache
-
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(REMOTE_CATALOG_URL)
-            resp.raise_for_status()
-            _catalog_cache = resp.json()
-            logger.info("Loaded catalog from remote.")
-    except Exception:
-        logger.warning("Could not fetch remote catalog; using local bundled version.")
-        _catalog_cache = _load_local_catalog()
-
-    return _catalog_cache  # type: ignore[return-value]
+    _catalog_cache = _load_local_catalog()
+    logger.info("Loaded local catalog from %s.", LOCAL_CATALOG_PATH)
+    return _catalog_cache
 
 
 def get_catalog(filter_backends: bool = True) -> dict[str, Any]:

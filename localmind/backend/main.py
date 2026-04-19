@@ -85,17 +85,19 @@ def _free_ollama_process() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[type-arg]
-    # 1. Check Ollama (non-blocking Popen)
+    loop = asyncio.get_event_loop()
+
+    # 1. Run blocking cleanup + ollama startup in a thread pool so the event
+    #    loop stays free and uvicorn can answer health-check requests immediately.
     if installer.is_ollama_installed():
         logger.info("Ollama found — cleaning up stale process then starting serve.")
-        _free_ollama_process()
-        _free_port(11434)
+        await loop.run_in_executor(None, _free_ollama_process)
+        await loop.run_in_executor(None, _free_port, 11434)
         installer.start_ollama_serve()
     else:
         logger.warning("Ollama not found; install flow required.")
 
-    # 2. Fetch model catalog in the background so the server is immediately
-    #    ready to serve /health without waiting for the network call.
+    # 2. Load model catalog (local file — fast, but keep it async-safe).
     asyncio.create_task(catalog.fetch_catalog())
 
     yield  # app runs here

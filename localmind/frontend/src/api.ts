@@ -1,9 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
-// tauri-plugin-http routes all HTTP through Rust, bypassing the WebView2
-// loopback network-isolation restriction on Windows.
-import { fetch } from "@tauri-apps/plugin-http";
+// tauri-plugin-http routes requests through Rust, which is required on Windows
+// where WebView2 blocks loopback fetch(). On macOS/Linux the native WKWebView/
+// WebKit fetch() reaches localhost directly, so we fall back to it when the
+// plugin throws (e.g. due to URL-scope issues in the release build).
+import { fetch as pluginFetch } from "@tauri-apps/plugin-http";
 
 const BASE = "http://127.0.0.1:8765";
+
+async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await pluginFetch(url, init);
+  } catch {
+    return window.fetch(url, init);
+  }
+}
 
 /** Poll the backend port every 500ms for up to 60 seconds (120 attempts).
  *  Uses a Rust TCP command so WebView2's loopback network-isolation on
@@ -29,7 +39,7 @@ export async function waitForBackend(onSlow?: () => void): Promise<void> {
 export async function getSystemInfo() {
   let res: Response;
   try {
-    res = await fetch(`${BASE}/system/info`);
+    res = await apiFetch(`${BASE}/system/info`);
   } catch {
     throw new Error("BACKEND_OFFLINE");
   }
@@ -38,25 +48,25 @@ export async function getSystemInfo() {
 }
 
 export async function getInstallStatus() {
-  const res = await fetch(`${BASE}/install/status`);
+  const res = await apiFetch(`${BASE}/install/status`);
   if (!res.ok) throw new Error("Failed to check install status");
   return res.json() as Promise<{ installed: boolean; running: boolean }>;
 }
 
 export async function getCatalog() {
-  const res = await fetch(`${BASE}/catalog`);
+  const res = await apiFetch(`${BASE}/catalog`);
   if (!res.ok) throw new Error("Failed to load model catalog");
   return res.json();
 }
 
 export async function getInstalledModels() {
-  const res = await fetch(`${BASE}/models/installed`);
+  const res = await apiFetch(`${BASE}/models/installed`);
   if (!res.ok) throw new Error("Failed to list installed models");
   return res.json();
 }
 
 export async function deleteModel(name: string, backend: string) {
-  const res = await fetch(
+  const res = await apiFetch(
     `${BASE}/models/${encodeURIComponent(name)}?backend=${backend}`,
     { method: "DELETE" }
   );
@@ -73,7 +83,7 @@ export function streamOllamaInstall(
 ): () => void {
   let closed = false;
 
-  fetch(`${BASE}/install/ollama`, {
+  apiFetch(`${BASE}/install/ollama`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sudo_password: sudoPassword ?? null }),
@@ -113,7 +123,7 @@ export function streamModelPull(
 ): () => void {
   let closed = false;
 
-  fetch(`${BASE}/models/pull`, {
+  apiFetch(`${BASE}/models/pull`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, backend, download_url: downloadUrl }),
@@ -155,7 +165,7 @@ export function streamChat(
 ): () => void {
   let closed = false;
 
-  fetch(`${BASE}/chat`, {
+  apiFetch(`${BASE}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model, backend, messages }),
