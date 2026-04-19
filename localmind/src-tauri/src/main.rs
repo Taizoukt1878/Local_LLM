@@ -28,14 +28,48 @@ fn main() {
         .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![check_backend_health])
         .setup(|app| {
+            // macOS: remove the quarantine extended attribute from the sidecar binary
+            // before spawning it. Downloaded apps can have this attribute set which
+            // causes Gatekeeper to block spawned helper executables.
+            #[cfg(target_os = "macos")]
+            if let Ok(exe) = std::env::current_exe() {
+                if let Some(dir) = exe.parent() {
+                    if let Ok(entries) = std::fs::read_dir(dir) {
+                        for entry in entries.flatten() {
+                            let name = entry.file_name();
+                            let n = name.to_string_lossy();
+                            if n.starts_with("localmind-backend") {
+                                let p = entry.path();
+                                let ps = p.to_string_lossy().to_string();
+                                // Remove quarantine attribute (no-op if absent)
+                                let _ = std::process::Command::new("xattr")
+                                    .args(["-d", "com.apple.quarantine", &ps])
+                                    .output();
+                                // Ensure execute permission
+                                let _ = std::process::Command::new("chmod")
+                                    .args(["+x", &ps])
+                                    .output();
+                            }
+                        }
+                    }
+                }
+            }
+
             let sidecar_command = app
                 .shell()
                 .sidecar("localmind-backend")
                 .expect("localmind-backend sidecar not found");
 
-            let (mut rx, child) = sidecar_command
-                .spawn()
-                .expect("Failed to spawn localmind-backend sidecar");
+            let (mut rx, child) = match sidecar_command.spawn() {
+                Ok(result) => result,
+                Err(e) => {
+                    eprintln!("[sidecar] Failed to spawn backend: {e}");
+                    // Return Ok so the window still opens and the frontend can show
+                    // the "backend offline" error with instructions for the user.
+                    app.manage(SidecarChild(Mutex::new(None)));
+                    return Ok(());
+                }
+            };
 
             // Forward sidecar stdout/stderr to the host console so crashes
             // are visible, and keep the pipe drained so uvicorn never blocks.

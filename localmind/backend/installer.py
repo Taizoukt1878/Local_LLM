@@ -14,24 +14,37 @@ OLLAMA_MACOS_URL = "https://ollama.com/download/Ollama-darwin.zip"
 OLLAMA_LINUX_INSTALL_SCRIPT = "https://ollama.com/install.sh"
 
 
-def is_ollama_installed() -> bool:
-    """Return True if the ollama binary is available on PATH or common locations."""
-    if shutil.which("ollama"):
-        return True
-    common = [
+def _get_ollama_path() -> str | None:
+    """Return the absolute path to the ollama binary, or None if not found."""
+    if path := shutil.which("ollama"):
+        return path
+    candidates: list[Path] = [
         Path("/usr/local/bin/ollama"),
         Path("/usr/bin/ollama"),
         Path.home() / ".local" / "bin" / "ollama",
         Path("C:/Program Files/Ollama/ollama.exe"),
+        # macOS: Ollama.app bundle binary (present even before the CLI symlink is created)
+        Path("/Applications/Ollama.app/Contents/Resources/ollama"),
     ]
-    return any(p.exists() for p in common)
+    for p in candidates:
+        if p.exists():
+            return str(p)
+    return None
+
+
+def is_ollama_installed() -> bool:
+    """Return True if the ollama binary is available on PATH or common locations."""
+    return _get_ollama_path() is not None
 
 
 def start_ollama_serve() -> None:
     """Start ollama serve as a detached background process (ignore if already running)."""
+    path = _get_ollama_path()
+    if not path:
+        return
     try:
         subprocess.Popen(
-            ["ollama", "serve"],
+            [path, "serve"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -198,6 +211,33 @@ async def install_ollama(sudo_password: str | None = None) -> AsyncGenerator[dic
                     "retryable": True,
                 }
                 return
+
+            # Ensure the bundled ollama binary is executable, then start the service.
+            ollama_bin = app_dst / "Contents" / "Resources" / "ollama"
+            if not ollama_bin.exists():
+                yield {
+                    "stage": "error",
+                    "percent": 0,
+                    "message": "Download appears corrupted (missing ollama binary). Please try again.",
+                    "retryable": True,
+                }
+                return
+
+            try:
+                ollama_bin.chmod(ollama_bin.stat().st_mode | 0o111)
+            except Exception:
+                pass
+
+            yield {"stage": "installing", "percent": 97, "message": "Starting Ollama service..."}
+            try:
+                subprocess.Popen(
+                    [str(ollama_bin), "serve"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except Exception:
+                pass
 
     elif system == "Windows":
         with tempfile.TemporaryDirectory() as tmpdir:

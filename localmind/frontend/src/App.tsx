@@ -8,6 +8,7 @@ import { getInstallStatus, getInstalledModels, waitForBackend } from "./api";
 
 
 const ONBOARDING_KEY = "onboardingComplete";
+const isMac = /mac/i.test(navigator.platform) || /mac os x/i.test(navigator.userAgent);
 
 export default function App() {
   const navigate = useNavigate();
@@ -30,7 +31,11 @@ export default function App() {
           setStartupMessage("Taking longer than usual to start, please wait...");
         });
       } catch {
-        setFatalError("Please restart the app");
+        setFatalError(
+          isMac
+            ? "The backend failed to start. If this is your first time opening the app, go to System Settings → Privacy & Security → Security and click \"Open Anyway\", then relaunch LocalMind."
+            : "The backend failed to start. Please restart the app."
+        );
         setReady(true);
         return;
       }
