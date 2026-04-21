@@ -77,7 +77,18 @@ async def chat(
         async with client.stream(
             "POST",
             f"{OLLAMA_BASE}/api/chat",
-            json={"model": model, "messages": messages, "stream": True},
+            json={
+                "model": model,
+                "messages": messages,
+                "stream": True,
+                "options": {
+                    "temperature": 0.3,
+                    "repeat_penalty": 1.2,
+                    "num_ctx": 4096,
+                    "top_p": 0.85,
+                    "top_k": 30,
+                },
+            },
         ) as resp:
             resp.raise_for_status()
             async for raw_line in resp.aiter_lines():

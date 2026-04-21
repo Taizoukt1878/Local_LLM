@@ -7,15 +7,21 @@ export default {
     extend: {
       colors: {
         surface: {
-          DEFAULT: "#0f0f10",
-          1: "#18181b",
-          2: "#27272a",
-          3: "#3f3f46",
+          DEFAULT: "var(--color-surface)",
+          1: "var(--color-surface-1)",
+          2: "var(--color-surface-2)",
+          3: "var(--color-surface-3)",
         },
         accent: {
           DEFAULT: "#6366f1",
           hover: "#4f46e5",
         },
+        fg: {
+          base:  "var(--color-fg-base)",
+          soft:  "var(--color-fg-soft)",
+          muted: "var(--color-fg-muted)",
+        },
+        stroke: "var(--color-stroke)",
       },
     },
   },

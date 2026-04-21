@@ -3,6 +3,7 @@ import { HardDrive, Cpu } from "lucide-react";
 interface Model {
   id: string;
   label: string;
+  tagline: string;
   backend: string;
   size_gb: number;
   description: string;
@@ -77,7 +78,7 @@ export default function ModelCard({
           >
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-zinc-200">
-                {model.label}
+                {model.tagline}
               </span>
               <div className="flex items-center gap-2 text-xs text-zinc-500">
                 {model.backend === "llamacpp" && (
@@ -88,7 +89,8 @@ export default function ModelCard({
                 <span>{model.size_gb} GB</span>
               </div>
             </div>
-            <p className="text-xs text-zinc-500 mt-1">{model.description}</p>
+            <p className="text-xs text-zinc-500 mt-0.5">{model.label}</p>
+            <p className="text-xs text-zinc-600 mt-0.5">{model.description}</p>
           </button>
         ))}
       </div>

@@ -212,7 +212,3 @@ Edit `models.json` at the repo root. The structure is:
 Pull requests are welcome. Please open an issue first for large changes.
 
 ---
-
-## License
-
-MIT

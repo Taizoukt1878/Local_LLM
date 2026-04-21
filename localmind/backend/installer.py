@@ -1,8 +1,8 @@
 import asyncio
+import os
 import platform
 import shutil
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import AsyncGenerator
@@ -14,24 +14,37 @@ OLLAMA_MACOS_URL = "https://ollama.com/download/Ollama-darwin.zip"
 OLLAMA_LINUX_INSTALL_SCRIPT = "https://ollama.com/install.sh"
 
 
-def is_ollama_installed() -> bool:
-    """Return True if the ollama binary is available on PATH or common locations."""
-    if shutil.which("ollama"):
-        return True
-    common = [
+def _get_ollama_path() -> str | None:
+    """Return the absolute path to the ollama binary, or None if not found."""
+    if path := shutil.which("ollama"):
+        return path
+    candidates: list[Path] = [
         Path("/usr/local/bin/ollama"),
         Path("/usr/bin/ollama"),
         Path.home() / ".local" / "bin" / "ollama",
         Path("C:/Program Files/Ollama/ollama.exe"),
+        # macOS: Ollama.app bundle binary (present even before the CLI symlink is created)
+        Path("/Applications/Ollama.app/Contents/Resources/ollama"),
     ]
-    return any(p.exists() for p in common)
+    for p in candidates:
+        if p.exists():
+            return str(p)
+    return None
+
+
+def is_ollama_installed() -> bool:
+    """Return True if the ollama binary is available on PATH or common locations."""
+    return _get_ollama_path() is not None
 
 
 def start_ollama_serve() -> None:
     """Start ollama serve as a detached background process (ignore if already running)."""
+    path = _get_ollama_path()
+    if not path:
+        return
     try:
         subprocess.Popen(
-            ["ollama", "serve"],
+            [path, "serve"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -54,11 +67,14 @@ async def _download_file(url: str, dest: Path) -> AsyncGenerator[dict, None]:
                     yield {"stage": "downloading", "percent": pct}
 
 
-async def install_ollama() -> AsyncGenerator[dict, None]:
+async def install_ollama(sudo_password: str | None = None) -> AsyncGenerator[dict, None]:
     """
     Generator that yields progress dicts and installs Ollama for the current platform.
     Yields: {"stage": str, "percent": int, "message": str}
     Final event: {"done": True}
+    Error event: {"stage": "error", "message": str, "retryable": bool}
+
+    sudo_password: optional administrator password for Linux installs.
     """
     system = platform.system()
 
@@ -66,25 +82,103 @@ async def install_ollama() -> AsyncGenerator[dict, None]:
 
     if system == "Linux":
         yield {"stage": "downloading", "percent": 10, "message": "Downloading Ollama install script..."}
-        proc = await asyncio.create_subprocess_shell(
-            f"curl -fsSL {OLLAMA_LINUX_INSTALL_SCRIPT} | sh",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        assert proc.stdout is not None
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            yield {"stage": "installing", "percent": 50, "message": line.decode().strip()}
-        await proc.wait()
-        if proc.returncode != 0:
-            yield {"stage": "error", "percent": 0, "message": "Installation failed. Please install Ollama manually."}
+
+        # Download install script to a temp file so we can feed it to sudo without a TTY
+        tmp_path: str | None = None
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
+                resp = await client.get(OLLAMA_LINUX_INSTALL_SCRIPT)
+                resp.raise_for_status()
+                with tempfile.NamedTemporaryFile(mode="wb", suffix=".sh", delete=False) as f:
+                    f.write(resp.content)
+                    tmp_path = f.name
+        except Exception as exc:
+            yield {
+                "stage": "error",
+                "percent": 0,
+                "message": f"Failed to download installer: {exc}",
+                "retryable": True,
+            }
             return
+
+        yield {"stage": "installing", "percent": 30, "message": "Installing Ollama (this may take a moment)..."}
+
+        try:
+            if sudo_password:
+                # sudo -S reads the password from stdin; the script path is a separate arg
+                # so stdin is fully consumed by sudo before sh starts.
+                proc = await asyncio.create_subprocess_exec(
+                    "sudo", "-S", "sh", tmp_path,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                assert proc.stdin is not None
+                proc.stdin.write((sudo_password + "\n").encode())
+                await proc.stdin.drain()
+                proc.stdin.close()
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    "sh", tmp_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+
+            assert proc.stdout is not None
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                decoded = line.decode(errors="ignore").strip()
+                if decoded:
+                    yield {"stage": "installing", "percent": 50, "message": decoded}
+
+            await proc.wait()
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+
+        if proc.returncode != 0:
+            if sudo_password:
+                msg = "Installation failed. Please check your password and try again."
+            else:
+                msg = (
+                    "Installation failed. "
+                    "Ollama requires administrator privileges — "
+                    "please enter your password and try again."
+                )
+            yield {
+                "stage": "error",
+                "percent": 0,
+                "message": msg,
+                "retryable": True,
+                "needs_sudo": not bool(sudo_password),
+            }
+            return
+
+        # The install script may have started ollama via systemd, but on systems
+        # without systemd (or if the service hasn't come up yet) we also start it
+        # directly. start_ollama_serve() is a fire-and-forget Popen — if ollama
+        # is already running the new process just fails to bind the port silently.
+        yield {"stage": "installing", "percent": 90, "message": "Starting Ollama service..."}
+        start_ollama_serve()
 
     elif system == "Darwin":
         with tempfile.TemporaryDirectory() as tmpdir:
             zip_path = Path(tmpdir) / "Ollama-darwin.zip"
+
+            yield {
+                "stage": "permission_prompt",
+                "percent": 0,
+                "message": (
+                    "We'll ask for your permission to install Ollama — "
+                    "this is a one-time setup. Click Allow when prompted."
+                ),
+            }
+
             yield {"stage": "downloading", "percent": 0, "message": "Downloading Ollama for macOS..."}
             async for progress in _download_file(OLLAMA_MACOS_URL, zip_path):
                 yield {**progress, "message": f"Downloading... {progress['percent']}%"}
@@ -99,14 +193,63 @@ async def install_ollama() -> AsyncGenerator[dict, None]:
 
             app_src = Path(tmpdir) / "Ollama.app"
             app_dst = Path("/Applications/Ollama.app")
-            if app_src.exists():
+
+            if not app_src.exists():
+                yield {
+                    "stage": "error",
+                    "percent": 0,
+                    "message": "Download appears corrupted. Please try again.",
+                    "retryable": True,
+                }
+                return
+
+            try:
                 if app_dst.exists():
                     shutil.rmtree(app_dst)
                 shutil.move(str(app_src), str(app_dst))
+            except PermissionError:
+                yield {
+                    "stage": "error",
+                    "percent": 0,
+                    "message": (
+                        "We need permission to install Ollama. "
+                        "Please try again and click Allow when macOS asks."
+                    ),
+                    "retryable": True,
+                }
+                return
+
+            # Ensure the bundled ollama binary is executable, then start the service.
+            ollama_bin = app_dst / "Contents" / "Resources" / "ollama"
+            if not ollama_bin.exists():
+                yield {
+                    "stage": "error",
+                    "percent": 0,
+                    "message": "Download appears corrupted (missing ollama binary). Please try again.",
+                    "retryable": True,
+                }
+                return
+
+            try:
+                ollama_bin.chmod(ollama_bin.stat().st_mode | 0o111)
+            except Exception:
+                pass
+
+            yield {"stage": "installing", "percent": 97, "message": "Starting Ollama service..."}
+            try:
+                subprocess.Popen(
+                    [str(ollama_bin), "serve"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except Exception:
+                pass
 
     elif system == "Windows":
         with tempfile.TemporaryDirectory() as tmpdir:
             exe_path = Path(tmpdir) / "OllamaSetup.exe"
+
             yield {"stage": "downloading", "percent": 0, "message": "Downloading Ollama for Windows..."}
             async for progress in _download_file(OLLAMA_WINDOWS_URL, exe_path):
                 yield {**progress, "message": f"Downloading... {progress['percent']}%"}
@@ -118,8 +261,25 @@ async def install_ollama() -> AsyncGenerator[dict, None]:
                 stderr=asyncio.subprocess.DEVNULL,
             )
             await proc.wait()
+
+            if proc.returncode != 0:
+                yield {
+                    "stage": "error",
+                    "percent": 0,
+                    "message": (
+                        "We need permission to install Ollama. "
+                        "Please try again and click Allow when Windows asks."
+                    ),
+                    "retryable": True,
+                }
+                return
     else:
-        yield {"stage": "error", "percent": 0, "message": f"Unsupported platform: {system}"}
+        yield {
+            "stage": "error",
+            "percent": 0,
+            "message": f"Unsupported platform: {system}",
+            "retryable": False,
+        }
         return
 
     yield {"stage": "done", "percent": 100, "message": "Ollama installed successfully!"}

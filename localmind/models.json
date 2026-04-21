@@ -3,10 +3,11 @@
     "label": "Small — Fast & Light",
     "description": "Perfect for quick questions, summaries, and everyday tasks. Works on almost any computer.",
     "requirements": "Minimum 4GB RAM, about 2–3GB of disk space",
-    "models": [
+    "models": [ 
       {
         "id": "phi3:mini",
         "label": "Phi 3 Mini",
+        "tagline": "Quick answers & everyday tasks",
         "backend": "ollama",
         "size_gb": 2.3,
         "description": "Microsoft's efficient small model, great for everyday use"
@@ -14,6 +15,7 @@
       {
         "id": "gemma:2b",
         "label": "Gemma 2B",
+        "tagline": "Fast & lightweight assistant",
         "backend": "ollama",
         "size_gb": 1.7,
         "description": "Google's lightweight model, fast and capable"
@@ -21,6 +23,7 @@
       {
         "id": "phi-3-mini.Q4_K_M.gguf",
         "label": "Phi 3 Mini (CPU only)",
+        "tagline": "Works without a dedicated GPU",
         "backend": "llamacpp",
         "size_gb": 2.3,
         "description": "Best choice if you have no dedicated GPU",
@@ -36,6 +39,7 @@
       {
         "id": "mistral:7b",
         "label": "Mistral 7B",
+        "tagline": "Writing, instructions & summaries",
         "backend": "ollama",
         "size_gb": 4.1,
         "description": "One of the best 7B models, excellent at following instructions"
@@ -43,6 +47,7 @@
       {
         "id": "llama3:8b",
         "label": "Llama 3 8B",
+        "tagline": "Well-rounded for most tasks",
         "backend": "ollama",
         "size_gb": 4.7,
         "description": "Meta's latest open model, very capable and well-rounded"
@@ -57,6 +62,7 @@
       {
         "id": "llama3:70b",
         "label": "Llama 3 70B",
+        "tagline": "Deep reasoning, coding & complex work",
         "backend": "ollama",
         "size_gb": 40,
         "description": "The most powerful open model available, rivals commercial models"
@@ -64,6 +70,7 @@
       {
         "id": "mixtral:8x7b",
         "label": "Mixtral 8x7B",
+        "tagline": "High capability with fast responses",
         "backend": "ollama",
         "size_gb": 26,
         "description": "Mixture of experts model, very fast for its capability level"

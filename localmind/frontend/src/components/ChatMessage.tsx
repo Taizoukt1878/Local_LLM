@@ -15,13 +15,13 @@ export default function ChatMessage({ role, content, streaming }: Props) {
       <div
         className={`
           flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center
-          ${isUser ? "bg-accent" : "bg-surface-2 border border-zinc-700"}
+          ${isUser ? "bg-accent" : "bg-surface-2 border border-stroke"}
         `}
       >
         {isUser ? (
           <User size={14} className="text-white" />
         ) : (
-          <Bot size={14} className="text-zinc-300" />
+          <Bot size={14} className="text-fg-soft" />
         )}
       </div>
 
@@ -31,7 +31,7 @@ export default function ChatMessage({ role, content, streaming }: Props) {
           max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed
           ${isUser
             ? "bg-accent text-white rounded-tr-sm"
-            : "bg-surface-1 border border-zinc-800 text-zinc-100 rounded-tl-sm"
+            : "bg-surface-1 border border-zinc-800 text-fg-base rounded-tl-sm"
           }
         `}
       >

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Send,
   Plus,
@@ -10,6 +11,7 @@ import {
   Trash2,
   AlertCircle,
   Bot,
+  RotateCcw,
 } from "lucide-react";
 import { streamChat, getInstalledModels, deleteModel, getCatalog, streamModelPull } from "../api";
 import ChatMessage from "../components/ChatMessage";
@@ -30,7 +32,41 @@ interface Props {
   onToggleDark: () => void;
 }
 
+const SYSTEM_PROMPT = `You are a concise, accurate AI assistant running locally on the user's device.
+  ## Core Rules
+    - Answer only what is asked. Do not expand scope unless asked.
+    - Never add meta-commentary, parenthetical notes, or explanations of your own reasoning.
+    - Never explain why you gave a response or what you chose not to include.
+    - Do not preface answers with affirmations like "Great question!", "Sure!", or "Of course!".
+    - Do not end responses with offers like "Let me know if you need anything else!"
+
+    ## Honesty
+    - If you don't know something, say "I don't know" directly.
+    - Never invent facts, URLs, file paths, code that you haven't verified, or capabilities you are unsure about.
+    - Distinguish clearly between what you know and what you're guessing.
+
+    ## Format
+    - Match response length to the complexity of the request. Short questions get short answers.
+    - Use plain prose by default. Use lists or code blocks only when they genuinely aid clarity.
+    - No unnecessary padding, preamble, or summaries at the end.`;
+
+const MAX_ASSISTANT_CHARS = 800;
+
+function prepareHistory(
+  messages: Message[],
+  newUserMsg: Message
+): { role: string; content: string }[] {
+  const history = [...messages, newUserMsg];
+  const truncated = history.map((msg) =>
+    msg.role === "assistant" && msg.content.length > MAX_ASSISTANT_CHARS
+      ? { ...msg, content: msg.content.slice(0, MAX_ASSISTANT_CHARS) + " […]" }
+      : msg
+  );
+  return [{ role: "system", content: SYSTEM_PROMPT }, ...truncated];
+}
+
 export default function Chat({ darkMode, onToggleDark }: Props) {
+  const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -39,7 +75,7 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [loadingModels, setLoadingModels] = useState(true);
-  const [catalog, setCatalog] = useState<Record<string, { models: { id: string; label: string; backend: string; size_gb: number; description: string; download_url?: string }[] }>>({});
+  const [catalog, setCatalog] = useState<Record<string, { models: { id: string; label: string; tagline: string; backend: string; size_gb: number; description: string; download_url?: string }[] }>>({});
   const [pulling, setPulling] = useState<Record<string, number>>({});
 
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -87,7 +123,7 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
     setError(null);
     setStreaming(true);
 
-    const history = [...messages, userMsg];
+    const payload = prepareHistory(messages, userMsg);
     let assistantContent = "";
 
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
@@ -95,7 +131,7 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
     cleanupRef.current = streamChat(
       currentModel.id,
       currentModel.backend,
-      history,
+      payload,
       (token) => {
         assistantContent += token;
         setMessages((prev) => {
@@ -156,20 +192,40 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
     }
   };
 
+  const handleResetOnboarding = () => {
+    localStorage.removeItem("onboardingComplete");
+    navigate("/onboarding", { replace: true });
+  };
+
+  const getModelTagline = (id: string) => {
+    for (const tier of Object.values(catalog)) {
+      const match = tier.models.find((m) => m.id === id);
+      if (match) return match.tagline;
+    }
+    return null;
+  };
+
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-screen bg-surface text-zinc-100">
+    <div className="flex h-screen bg-surface text-fg-base">
       {/* Main chat area */}
       <div className="flex flex-col flex-1 min-w-0">
         {/* Header */}
-        <header className="flex items-center justify-between px-5 py-3 border-b border-zinc-800 bg-surface-1">
+        <header className="flex items-center justify-between px-5 py-3 border-b border-stroke bg-surface-1">
           <div className="flex items-center gap-2">
             <Bot size={18} className="text-accent" />
             {currentModel ? (
-              <span className="text-sm font-medium text-zinc-200">{currentModel.id}</span>
+              <div className="flex items-baseline gap-2">
+                <span className="text-sm font-medium text-fg-base">
+                  {getModelTagline(currentModel.id) ?? currentModel.id}
+                </span>
+                {getModelTagline(currentModel.id) && (
+                  <span className="text-xs text-fg-muted">{currentModel.id}</span>
+                )}
+              </div>
             ) : (
-              <span className="text-sm text-zinc-500">No model selected</span>
+              <span className="text-sm text-fg-muted">No model selected</span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -178,19 +234,19 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
                 setMessages([]);
                 setError(null);
               }}
-              className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 px-3 py-1.5 rounded-lg hover:bg-surface-2 transition-colors"
+              className="flex items-center gap-1.5 text-xs text-fg-soft hover:text-fg-base px-3 py-1.5 rounded-lg hover:bg-surface-2 transition-colors"
             >
               <Plus size={14} /> New chat
             </button>
             <button
               onClick={onToggleDark}
-              className="p-2 rounded-lg hover:bg-surface-2 text-zinc-400 hover:text-zinc-200 transition-colors"
+              className="p-2 rounded-lg hover:bg-surface-2 text-fg-soft hover:text-fg-base transition-colors"
             >
               {darkMode ? <Sun size={16} /> : <Moon size={16} />}
             </button>
             <button
               onClick={() => setShowSettings(true)}
-              className="p-2 rounded-lg hover:bg-surface-2 text-zinc-400 hover:text-zinc-200 transition-colors"
+              className="p-2 rounded-lg hover:bg-surface-2 text-fg-soft hover:text-fg-base transition-colors"
             >
               <Settings size={16} />
             </button>
@@ -204,16 +260,31 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
               <div className="w-14 h-14 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
                 <Bot size={24} className="text-accent" />
               </div>
-              <div>
-                <h2 className="text-lg font-semibold text-zinc-200">
-                  {currentModel ? "Start a conversation" : "No model selected"}
-                </h2>
-                <p className="text-sm text-zinc-500 mt-1">
-                  {currentModel
-                    ? "Ask anything — everything runs privately on your computer."
-                    : "Open settings to choose or download a model."}
-                </p>
-              </div>
+              {!loadingModels && installedModels.length === 0 ? (
+                <div>
+                  <h2 className="text-lg font-semibold text-fg-base">No models installed</h2>
+                  <p className="text-sm text-fg-muted mt-1">
+                    You need at least one model to start chatting.{" "}
+                    <button
+                      onClick={handleResetOnboarding}
+                      className="text-accent hover:underline"
+                    >
+                      Click here to set up.
+                    </button>
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <h2 className="text-lg font-semibold text-fg-base">
+                    {currentModel ? "Start a conversation" : "No model selected"}
+                  </h2>
+                  <p className="text-sm text-fg-muted mt-1">
+                    {currentModel
+                      ? "Ask anything — everything runs privately on your computer."
+                      : "Open settings to choose or download a model."}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -237,8 +308,8 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
         </div>
 
         {/* Input */}
-        <div className="px-5 pb-5 pt-3 border-t border-zinc-800">
-          <div className="flex items-end gap-3 bg-surface-1 border border-zinc-700 rounded-2xl px-4 py-3 focus-within:border-accent/50 transition-colors">
+        <div className="px-5 pb-5 pt-3 border-t border-stroke">
+          <div className="flex items-end gap-3 bg-surface-1 border border-stroke rounded-2xl px-4 py-3 focus-within:border-accent/50 transition-colors">
             <textarea
               ref={textareaRef}
               rows={1}
@@ -251,7 +322,7 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
                   : "Choose a model in settings to start chatting"
               }
               disabled={!currentModel || streaming}
-              className="flex-1 bg-transparent resize-none outline-none text-sm text-zinc-200 placeholder:text-zinc-600 disabled:cursor-not-allowed"
+              className="flex-1 bg-transparent resize-none outline-none text-sm text-fg-base placeholder:text-fg-muted disabled:cursor-not-allowed"
             />
             <button
               onClick={sendMessage}
@@ -265,7 +336,7 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
               )}
             </button>
           </div>
-          <p className="text-[11px] text-zinc-600 text-center mt-2">
+          <p className="text-[11px] text-fg-muted text-center mt-2">
             Everything runs locally on your device. No data leaves your computer.
           </p>
         </div>
@@ -278,27 +349,27 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => setShowSettings(false)}
           />
-          <div className="relative w-96 bg-surface-1 border-l border-zinc-800 h-full overflow-y-auto flex flex-col">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
-              <h2 className="font-semibold text-zinc-100">Settings</h2>
+          <div className="relative w-96 bg-surface-1 border-l border-stroke h-full overflow-y-auto flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-stroke">
+              <h2 className="font-semibold text-fg-base">Settings</h2>
               <button
                 onClick={() => setShowSettings(false)}
-                className="p-1.5 rounded-lg hover:bg-surface-2 text-zinc-400"
+                className="p-1.5 rounded-lg hover:bg-surface-2 text-fg-soft"
               >
                 <X size={16} />
               </button>
             </div>
 
-            <div className="flex-1 px-5 py-5 space-y-6">
+            <div className="flex-1 px-5 py-5 space-y-6 flex flex-col">
               {/* Installed models */}
               <section>
-                <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">
+                <h3 className="text-xs font-semibold text-fg-muted uppercase tracking-wider mb-3">
                   Your Models
                 </h3>
                 {loadingModels ? (
                   <Loader2 size={18} className="text-accent animate-spin" />
                 ) : installedModels.length === 0 ? (
-                  <p className="text-sm text-zinc-500">No models installed yet.</p>
+                  <p className="text-sm text-fg-muted">No models installed yet.</p>
                 ) : (
                   <div className="space-y-2">
                     {installedModels.map((m) => (
@@ -312,13 +383,16 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
                           flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all
                           ${currentModel?.id === m.id
                             ? "border-accent bg-accent/10"
-                            : "border-zinc-700 hover:border-zinc-500 bg-surface-2"
+                            : "border-stroke hover:border-fg-muted bg-surface-2"
                           }
                         `}
                       >
                         <div>
-                          <div className="text-sm font-medium text-zinc-200">{m.id}</div>
-                          <div className="text-xs text-zinc-500">
+                          <div className="text-sm font-medium text-fg-base">
+                            {getModelTagline(m.id) ?? m.id}
+                          </div>
+                          <div className="text-xs text-fg-muted">
+                            {getModelTagline(m.id) && <span>{m.id} · </span>}
                             {m.size_gb} GB · {m.backend}
                           </div>
                         </div>
@@ -327,7 +401,7 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
                             e.stopPropagation();
                             handleDeleteModel(m.id, m.backend);
                           }}
-                          className="p-1.5 rounded-lg hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-colors"
+                          className="p-1.5 rounded-lg hover:bg-red-500/20 text-fg-muted hover:text-red-400 transition-colors"
                         >
                           <Trash2 size={14} />
                         </button>
@@ -337,15 +411,26 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
                 )}
               </section>
 
+              {/* Reset onboarding */}
+              <section className="mt-auto pt-4 border-t border-stroke">
+                <button
+                  onClick={handleResetOnboarding}
+                  className="flex items-center gap-2 w-full text-sm text-fg-soft hover:text-red-400 hover:bg-red-500/10 px-3 py-2.5 rounded-xl transition-colors"
+                >
+                  <RotateCcw size={14} />
+                  Reset &amp; restart setup
+                </button>
+              </section>
+
               {/* Download more */}
               <section>
-                <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">
+                <h3 className="text-xs font-semibold text-fg-muted uppercase tracking-wider mb-3">
                   Download More Models
                 </h3>
                 <div className="space-y-4">
                   {Object.entries(catalog).map(([tierId, tier]) => (
                     <div key={tierId}>
-                      <div className="text-xs text-zinc-400 font-medium mb-2">{tier.models[0]?.label?.split(" ")[0] ?? tierId}</div>
+                      <div className="text-xs text-fg-soft font-medium mb-2">{tier.models[0]?.label?.split(" ")[0] ?? tierId}</div>
                       <div className="space-y-1.5">
                         {tier.models.map((model) => {
                           const isInstalled = installedModels.some((m) => m.id === model.id);
@@ -355,11 +440,11 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
                           return (
                             <div
                               key={model.id}
-                              className="flex items-center justify-between bg-surface-2 rounded-xl px-3 py-2.5 border border-zinc-800"
+                              className="flex items-center justify-between bg-surface-2 rounded-xl px-3 py-2.5 border border-stroke"
                             >
                               <div className="flex-1 min-w-0">
-                                <div className="text-sm text-zinc-200 truncate">{model.label}</div>
-                                <div className="text-xs text-zinc-500">{model.size_gb} GB</div>
+                                <div className="text-sm text-fg-base truncate">{model.tagline}</div>
+                                <div className="text-xs text-fg-muted">{model.label} · {model.size_gb} GB</div>
                               </div>
                               {isInstalled ? (
                                 <span className="text-xs text-green-400 ml-2">Installed</span>
@@ -371,7 +456,7 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
                                       style={{ width: `${pullPct}%` }}
                                     />
                                   </div>
-                                  <span className="text-xs text-zinc-400">{pullPct}%</span>
+                                  <span className="text-xs text-fg-soft">{pullPct}%</span>
                                 </div>
                               ) : (
                                 <button

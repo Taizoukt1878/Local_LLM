@@ -4,6 +4,10 @@ LocalMind FastAPI backend — runs as a sidecar on localhost:8765.
 import asyncio
 import json
 import logging
+import platform
+import socket
+import subprocess
+import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 
@@ -22,21 +26,79 @@ import ollama_backend
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Stale process cleanup helpers
+# ---------------------------------------------------------------------------
+
+def _is_port_in_use(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _free_port(port: int) -> None:
+    """Kill the process holding *port*, then wait 1 second."""
+    if not _is_port_in_use(port):
+        return
+    try:
+        system = platform.system()
+        if system == "Windows":
+            result = subprocess.run(
+                ["netstat", "-ano"], capture_output=True, text=True
+            )
+            pid = None
+            for line in result.stdout.splitlines():
+                if f":{port}" in line and "LISTENING" in line:
+                    parts = line.strip().split()
+                    if parts:
+                        pid = parts[-1]
+                        break
+            if pid:
+                subprocess.run(["taskkill", "/PID", pid, "/F"], capture_output=True)
+        else:
+            result = subprocess.run(
+                ["lsof", "-ti", f":{port}"], capture_output=True, text=True
+            )
+            pid = result.stdout.strip()
+            if pid:
+                subprocess.run(["kill", "-9", pid], capture_output=True)
+        time.sleep(1)
+    except Exception:
+        logger.warning("_free_port(%d) failed — continuing anyway", port)
+
+
+def _free_ollama_process() -> None:
+    """Kill any running ollama process, then wait 2 seconds."""
+    try:
+        system = platform.system()
+        if system == "Windows":
+            subprocess.run(["taskkill", "/IM", "ollama.exe", "/F"], capture_output=True)
+        else:
+            subprocess.run(["pkill", "-f", "ollama"], capture_output=True)
+        time.sleep(2)
+    except Exception:
+        logger.warning("_free_ollama_process() failed — continuing anyway")
+
 # ---------------------------------------------------------------------------
 # App lifecycle
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[type-arg]
-    # 1. Check Ollama
+    loop = asyncio.get_event_loop()
+
+    # 1. Run blocking cleanup + ollama startup in a thread pool so the event
+    #    loop stays free and uvicorn can answer health-check requests immediately.
     if installer.is_ollama_installed():
-        logger.info("Ollama found — starting serve.")
+        logger.info("Ollama found — cleaning up stale process then starting serve.")
+        await loop.run_in_executor(None, _free_ollama_process)
+        await loop.run_in_executor(None, _free_port, 11434)
         installer.start_ollama_serve()
     else:
         logger.warning("Ollama not found; install flow required.")
 
-    # 2. Load model catalog
-    await catalog.fetch_catalog()
+    # 2. Load model catalog (local file — fast, but keep it async-safe).
+    asyncio.create_task(catalog.fetch_catalog())
 
     yield  # app runs here
 
@@ -46,7 +108,8 @@ app = FastAPI(title="LocalMind Backend", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "tauri://localhost",
+        "tauri://localhost",        # macOS Tauri
+        "https://tauri.localhost",  # Windows WebView2 / Linux Tauri v2
         "http://localhost",
         "http://localhost:5173",
         "http://localhost:5174",
@@ -99,17 +162,30 @@ async def health() -> dict[str, str]:
 
 @app.get("/system/info")
 async def system_info() -> dict[str, Any]:
+    # Run synchronous hardware probing in a thread so it never blocks the
+    # asyncio event loop (subprocess calls inside can stall for seconds).
+    loop = asyncio.get_event_loop()
     try:
-        return hardware.get_hardware_profile()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, hardware.get_hardware_profile),
+            timeout=15.0,
+        )
+        return result
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail={"message": "Hardware probe timed out"})
     except Exception as exc:
         logger.exception("hardware probe failed")
         raise HTTPException(status_code=500, detail={"message": str(exc)}) from exc
 
 
-@app.get("/install/ollama")
-async def install_ollama_endpoint() -> StreamingResponse:
+class InstallRequest(BaseModel):
+    sudo_password: str | None = None
+
+
+@app.post("/install/ollama")
+async def install_ollama_endpoint(req: InstallRequest = InstallRequest()) -> StreamingResponse:
     return StreamingResponse(
-        _stream_generator(installer.install_ollama()),
+        _stream_generator(installer.install_ollama(sudo_password=req.sudo_password or None)),
         media_type="text/event-stream",
     )
 
@@ -237,4 +313,8 @@ async def chat_endpoint(req: ChatRequest) -> StreamingResponse:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8765, log_level="info")
+    # Free any stale backend process before binding the port.
+    _free_port(8765)
+    # Use the app object directly instead of a string import — string-based
+    # module references break in PyInstaller frozen executables.
+    uvicorn.run(app, host="127.0.0.1", port=8765, log_level="info")
