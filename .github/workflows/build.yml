@@ -182,6 +182,8 @@ jobs:
             ## Install
 
             **macOS (Apple Silicon — M1/M2/M3/M4):** download the `.dmg` file.
+            **Windows:** download the `.msi` or `.exe` file.
+            **Linux:** download the `.AppImage` or `.deb` file.
 
             > **First launch on macOS:** because the app is not yet notarized, macOS will
             > block it on first open.  After the dialog appears, go to
@@ -189,5 +191,9 @@ jobs:
             > then relaunch LocalMind.  You only need to do this once.
           files: |
             artifacts/macos-dmg-arm64/*.dmg
+            artifacts/windows-msi/*.msi
+            artifacts/windows-nsis/*.exe
+            artifacts/linux-appimage/*.AppImage
+            artifacts/linux-deb/*.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
