@@ -159,6 +159,13 @@ async def install_ollama(sudo_password: str | None = None) -> AsyncGenerator[dic
             }
             return
 
+        # The install script may have started ollama via systemd, but on systems
+        # without systemd (or if the service hasn't come up yet) we also start it
+        # directly. start_ollama_serve() is a fire-and-forget Popen — if ollama
+        # is already running the new process just fails to bind the port silently.
+        yield {"stage": "installing", "percent": 90, "message": "Starting Ollama service..."}
+        start_ollama_serve()
+
     elif system == "Darwin":
         with tempfile.TemporaryDirectory() as tmpdir:
             zip_path = Path(tmpdir) / "Ollama-darwin.zip"
