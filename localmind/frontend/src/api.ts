@@ -10,8 +10,14 @@ const BASE = "http://127.0.0.1:8765";
 async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
   try {
     return await pluginFetch(url, init);
-  } catch {
-    return window.fetch(url, init);
+  } catch (pluginErr) {
+    console.warn("[apiFetch] plugin-http failed, falling back to window.fetch", url, pluginErr);
+    try {
+      return await window.fetch(url, init);
+    } catch (fetchErr) {
+      console.error("[apiFetch] both plugin-http and window.fetch failed", url, fetchErr);
+      throw fetchErr;
+    }
   }
 }
 
