@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Shield,
   Wifi,
@@ -24,9 +24,59 @@ import ModelCard from "../components/ModelCard";
 
 interface HardwareProfile {
   ram_gb: number;
-  gpu: { present: boolean; name: string | null; vram_gb: number };
+  gpu_present: boolean;
+  gpu_name: string | null;
+  vram_gb: number;
   disk_free_gb: number;
   recommended_tier: "small" | "medium" | "large";
+  platform: string;
+}
+
+const DEFAULT_HARDWARE: HardwareProfile = {
+  ram_gb: 8,
+  gpu_present: false,
+  gpu_name: null,
+  vram_gb: 0,
+  disk_free_gb: 50,
+  recommended_tier: "small",
+  platform: "Unknown",
+};
+
+// Coerce whatever /system/info returns into the flat shape the UI expects.
+// Tolerates missing fields, empty strings, and the legacy nested `gpu` shape
+// from older backends so the user never gets stuck on the scan step.
+function normalizeHardware(data: unknown): HardwareProfile {
+  const d = (data ?? {}) as Record<string, unknown>;
+  const legacyGpu = (d.gpu ?? {}) as Record<string, unknown>;
+
+  const gpuPresent =
+    typeof d.gpu_present === "boolean"
+      ? d.gpu_present
+      : typeof legacyGpu.present === "boolean"
+        ? legacyGpu.present
+        : false;
+
+  const rawName = (d.gpu_name ?? legacyGpu.name) as unknown;
+  const gpuName = typeof rawName === "string" && rawName.trim() !== "" ? rawName : null;
+
+  const vramRaw = d.vram_gb ?? legacyGpu.vram_gb;
+  const vramGb = typeof vramRaw === "number" ? vramRaw : 0;
+
+  return {
+    ram_gb: typeof d.ram_gb === "number" ? d.ram_gb : DEFAULT_HARDWARE.ram_gb,
+    gpu_present: gpuPresent,
+    gpu_name: gpuName,
+    vram_gb: vramGb,
+    disk_free_gb:
+      typeof d.disk_free_gb === "number" ? d.disk_free_gb : DEFAULT_HARDWARE.disk_free_gb,
+    recommended_tier:
+      d.recommended_tier === "small" ||
+      d.recommended_tier === "medium" ||
+      d.recommended_tier === "large"
+        ? d.recommended_tier
+        : DEFAULT_HARDWARE.recommended_tier,
+    platform: typeof d.platform === "string" ? d.platform : DEFAULT_HARDWARE.platform,
+  };
 }
 
 interface Model {
@@ -103,58 +153,90 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [sudoPassword, setSudoPassword] = useState("");
   const [needsSudo, setNeedsSudo] = useState(false);
 
-  // Step: scan hardware
+  // Track whether the current scan has already advanced — prevents the
+  // hard-timeout fallback from racing the real response and double-advancing.
+  const scanAdvancedRef = useRef(false);
+  const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Step: scan hardware. Always advances — either with real data, or with
+  // safe defaults after a 5s timeout. Never strands the user on this step.
   const runHardwareScan = useCallback(async () => {
     setStep("scanning");
     setError(null);
+    scanAdvancedRef.current = false;
+    if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
 
-    // Retry getSystemInfo up to 3 times — the hardware probe can take a few
-    // seconds on first run (subprocess GPU detection) and a single timeout
-    // should not surface as a hard error.
-    let info: Awaited<ReturnType<typeof getSystemInfo>> | null = null;
-    let lastErr: Error | null = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        info = await getSystemInfo();
-        break;
-      } catch (err) {
-        lastErr = err instanceof Error ? err : new Error(String(err));
-        if (attempt < 2) await new Promise((r) => setTimeout(r, 1500));
+    const advance = (info: HardwareProfile, fallbackMessage?: string) => {
+      if (scanAdvancedRef.current) return;
+      scanAdvancedRef.current = true;
+      if (scanTimeoutRef.current) {
+        clearTimeout(scanTimeoutRef.current);
+        scanTimeoutRef.current = null;
       }
+      setHardware(info);
+      setSelectedTier(info.recommended_tier);
+      if (fallbackMessage) setError(fallbackMessage);
+    };
+
+    // Hard fallback: if anything keeps us on the scan step for more than 5s,
+    // force-advance with sane defaults and surface a soft notice.
+    scanTimeoutRef.current = setTimeout(() => {
+      if (scanAdvancedRef.current) return;
+      console.warn('[hardware scan] 5s timeout — advancing with defaults');
+      advance(
+        DEFAULT_HARDWARE,
+        "Could not detect your hardware. Using recommended defaults.",
+      );
+      setStep("install");
+    }, 5000);
+
+    let data: unknown;
+    try {
+      data = await getSystemInfo();
+    } catch (err) {
+      // getSystemInfo no longer throws, but defend in depth.
+      console.error('[hardware scan] unexpected throw:', err);
+      data = null;
+    }
+    console.log('[hardware scan] response:', data);
+
+    const info = normalizeHardware(data);
+
+    let installStatus: { installed: boolean; running: boolean };
+    try {
+      installStatus = await getInstallStatus();
+    } catch {
+      installStatus = { installed: false, running: false };
     }
 
-    if (!info) {
-      const msg = lastErr?.message ?? "";
-      setError(
-        msg === "BACKEND_OFFLINE"
-          ? "Could not reach the LocalMind service. Please restart the app and try again."
-          : "We couldn't read your computer's specs. Please try again."
-      );
-      setStep("welcome");
+    let cat: Record<string, unknown>;
+    try {
+      cat = await getCatalog();
+    } catch {
+      cat = {};
+    }
+
+    if (scanAdvancedRef.current) {
+      // The 5s timer already fired — still update background state so the
+      // install/pick steps have catalog data when the user reaches them.
+      setCatalog(cat as Record<string, TierData>);
       return;
     }
 
-    try {
-      setHardware(info);
-      const installStatus = await getInstallStatus();
-      const cat = await getCatalog();
-      setCatalog(cat);
-      setSelectedTier(info.recommended_tier);
-
-      if (!installStatus.installed) {
-        setStep("install");
-      } else {
-        setStep("hardware");
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "";
-      setError(
-        msg === "BACKEND_OFFLINE"
-          ? "Could not reach the LocalMind service. Please restart the app and try again."
-          : "We couldn't read your computer's specs. Please try again."
-      );
-      setStep("welcome");
+    setCatalog(cat as Record<string, TierData>);
+    advance(info);
+    if (!installStatus.installed) {
+      setStep("install");
+    } else {
+      setStep("hardware");
     }
+  }, []);
+
+  // Cleanup the scan timeout on unmount.
+  useEffect(() => {
+    return () => {
+      if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+    };
   }, []);
 
   // Step: install Ollama
@@ -188,9 +270,11 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
       if (event.done) {
         cleanup();
         // Verify Ollama is actually running before proceeding, with retries.
+        // Windows Ollama takes noticeably longer to initialise than macOS,
+        // hence the 5s warmup wait and 5×3s retry window.
         (async () => {
           setInstallMessage("Setting up Ollama, please wait...");
-          await new Promise((r) => setTimeout(r, 3000));
+          await new Promise((r) => setTimeout(r, 5000));
           for (let attempt = 0; attempt < 5; attempt++) {
             try {
               const status = await getInstallStatus();
@@ -202,7 +286,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
               // not ready yet
             }
             if (attempt < 4) {
-              await new Promise((r) => setTimeout(r, 2000));
+              await new Promise((r) => setTimeout(r, 3000));
             }
           }
           // Proceed anyway — Ollama may still be initialising.
@@ -324,8 +408,8 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
             icon={<Cpu size={18} />}
             label="Graphics Card"
             value={
-              hardware.gpu.present
-                ? `${hardware.gpu.name ?? "GPU"} — ${hardware.gpu.vram_gb} GB VRAM`
+              hardware.gpu_present
+                ? `${hardware.gpu_name ?? "GPU"} — ${hardware.vram_gb} GB VRAM`
                 : "No dedicated GPU — CPU mode will be used"
             }
           />
@@ -380,7 +464,8 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
           <div className="flex items-start gap-3 bg-blue-400/10 border border-blue-400/30 rounded-xl px-4 py-3 w-full">
             <AlertCircle size={16} className="text-blue-400 mt-0.5 flex-shrink-0" />
             <p className="text-sm text-blue-200">
-              Windows may show a security prompt — please click <strong>Allow</strong> if asked.
+              Windows may show a security prompt — please click{" "}
+              <strong>Yes</strong> or <strong>Allow</strong> if asked.
             </p>
           </div>
         )}

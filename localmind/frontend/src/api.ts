@@ -21,16 +21,19 @@ async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
   }
 }
 
-/** Poll the backend port every 500ms for up to 60 seconds (120 attempts).
+/** Poll the backend port every 500ms for up to 30 seconds (60 attempts).
  *  Uses a Rust TCP command so WebView2's loopback network-isolation on
  *  Windows cannot interfere with the startup probe.
- *  Calls onSlow after 15 seconds (attempt 30) if still not ready.
- *  Throws after all retries are exhausted. */
-export async function waitForBackend(onSlow?: () => void): Promise<void> {
-  const maxAttempts = 120;
+ *  Surfaces progressive "still waiting" messages via onSlow:
+ *    - after 10s (attempt 20): "Still starting up, please wait..."
+ *    - after 20s (attempt 40): "Taking longer than usual on Windows..."
+ *  Throws BACKEND_STARTUP_TIMEOUT only after all retries are exhausted. */
+export async function waitForBackend(onSlow?: (message: string) => void): Promise<void> {
+  const maxAttempts = 60;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    console.log('[health] attempt', attempt);
-    if (attempt === 30 && onSlow) onSlow();
+    console.log('[health check] attempt:', attempt);
+    if (attempt === 20 && onSlow) onSlow("Still starting up, please wait...");
+    if (attempt === 40 && onSlow) onSlow("Taking longer than usual on Windows...");
     try {
       const alive = await invoke<boolean>("check_backend_health");
       if (alive) return;
@@ -42,41 +45,101 @@ export async function waitForBackend(onSlow?: () => void): Promise<void> {
   throw new Error("BACKEND_STARTUP_TIMEOUT");
 }
 
-export async function getSystemInfo() {
-  let res: Response;
+// ── Safe defaults for non-health endpoints ────────────────────────────────
+//
+// Per design: only the health check is allowed to surface a fatal error to
+// the user. All other endpoints catch network failures, log via
+// console.error('[api] failed:', endpoint, error), and return a usable
+// fallback so a single transient network blip can't strand the UI.
+
+const DEFAULT_SYSTEM_INFO = {
+  ram_gb: 8,
+  gpu_present: false,
+  gpu_name: null as string | null,
+  vram_gb: 0,
+  disk_free_gb: 50,
+  recommended_tier: "small" as "small" | "medium" | "large",
+  platform: "Unknown",
+};
+
+export type SystemInfo = typeof DEFAULT_SYSTEM_INFO;
+
+export async function getSystemInfo(): Promise<SystemInfo> {
   try {
-    res = await apiFetch(`${BASE}/system/info`);
-  } catch {
-    throw new Error("BACKEND_OFFLINE");
+    const res = await apiFetch(`${BASE}/system/info`);
+    if (!res.ok) {
+      console.error('[api] failed:', '/system/info', `HTTP ${res.status}`);
+      return { ...DEFAULT_SYSTEM_INFO };
+    }
+    return (await res.json()) as SystemInfo;
+  } catch (error) {
+    console.error('[api] failed:', '/system/info', error);
+    return { ...DEFAULT_SYSTEM_INFO };
   }
-  if (!res.ok) throw new Error("Failed to read system info");
-  return res.json();
 }
 
-export async function getInstallStatus() {
-  const res = await apiFetch(`${BASE}/install/status`);
-  if (!res.ok) throw new Error("Failed to check install status");
-  return res.json() as Promise<{ installed: boolean; running: boolean }>;
+export async function getInstallStatus(): Promise<{ installed: boolean; running: boolean }> {
+  try {
+    const res = await apiFetch(`${BASE}/install/status`);
+    if (!res.ok) {
+      console.error('[api] failed:', '/install/status', `HTTP ${res.status}`);
+      return { installed: false, running: false };
+    }
+    return (await res.json()) as { installed: boolean; running: boolean };
+  } catch (error) {
+    console.error('[api] failed:', '/install/status', error);
+    return { installed: false, running: false };
+  }
 }
 
-export async function getCatalog() {
-  const res = await apiFetch(`${BASE}/catalog`);
-  if (!res.ok) throw new Error("Failed to load model catalog");
-  return res.json();
+// Loose `any` returns mirror res.json() — call sites pin their own concrete
+// shape (TierData map, InstalledModel[]) and adding stricter return types
+// here would force casts at every consumer.
+export async function getCatalog(): Promise<any> {
+  try {
+    const res = await apiFetch(`${BASE}/catalog`);
+    if (!res.ok) {
+      console.error('[api] failed:', '/catalog', `HTTP ${res.status}`);
+      return {};
+    }
+    return await res.json();
+  } catch (error) {
+    console.error('[api] failed:', '/catalog', error);
+    return {};
+  }
 }
 
-export async function getInstalledModels() {
-  const res = await apiFetch(`${BASE}/models/installed`);
-  if (!res.ok) throw new Error("Failed to list installed models");
-  return res.json();
+export async function getInstalledModels(): Promise<any> {
+  try {
+    const res = await apiFetch(`${BASE}/models/installed`);
+    if (!res.ok) {
+      console.error('[api] failed:', '/models/installed', `HTTP ${res.status}`);
+      return [];
+    }
+    return await res.json();
+  } catch (error) {
+    console.error('[api] failed:', '/models/installed', error);
+    return [];
+  }
 }
 
+// deleteModel is a destructive write — keep it throwing so callers can show a
+// targeted "couldn't delete" message, but log the failure for diagnostics.
 export async function deleteModel(name: string, backend: string) {
-  const res = await apiFetch(
-    `${BASE}/models/${encodeURIComponent(name)}?backend=${backend}`,
-    { method: "DELETE" }
-  );
-  if (!res.ok) throw new Error("Failed to delete model");
+  const endpoint = `/models/${name}?backend=${backend}`;
+  try {
+    const res = await apiFetch(
+      `${BASE}/models/${encodeURIComponent(name)}?backend=${backend}`,
+      { method: "DELETE" }
+    );
+    if (!res.ok) {
+      console.error('[api] failed:', endpoint, `HTTP ${res.status}`);
+      throw new Error("Failed to delete model");
+    }
+  } catch (error) {
+    console.error('[api] failed:', endpoint, error);
+    throw error;
+  }
 }
 
 /** Stream Ollama install progress. Calls onEvent for each SSE data line.

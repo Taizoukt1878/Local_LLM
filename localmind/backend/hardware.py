@@ -1,9 +1,12 @@
+import logging
 import platform
 import shutil
 import subprocess
 from typing import Literal
 
 import psutil
+
+logger = logging.getLogger(__name__)
 
 Tier = Literal["small", "medium", "large"]
 
@@ -83,52 +86,96 @@ def _get_gpu_info_linux() -> dict:
     return {"present": False, "name": None, "vram_gb": 0}
 
 
+def _parse_wmic_video_controller(stdout: str) -> dict | None:
+    """
+    Parse the output of `wmic path win32_VideoController get name,AdapterRAM`.
+
+    The default (non-csv) wmic format is fixed-width with a header row:
+        AdapterRAM   Name
+        4293918720   NVIDIA GeForce RTX 3070
+        ...
+
+    Column order isn't guaranteed (AdapterRAM may come before or after Name),
+    so we use the header row to find each field's column span.
+    """
+    lines = [ln for ln in stdout.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return None
+
+    header = lines[0]
+    header_lower = header.lower()
+    name_idx = header_lower.find("name")
+    ram_idx = header_lower.find("adapterram")
+    if name_idx < 0 or ram_idx < 0:
+        return None
+
+    # Determine column boundaries from the two fields' positions.
+    if ram_idx < name_idx:
+        ram_slice = slice(ram_idx, name_idx)
+        name_slice = slice(name_idx, None)
+    else:
+        name_slice = slice(name_idx, ram_idx)
+        ram_slice = slice(ram_idx, None)
+
+    for row in lines[1:]:
+        # Pad short rows so slicing doesn't blow up.
+        if len(row) < max(name_idx, ram_idx):
+            continue
+        name = row[name_slice].strip()
+        ram_str = row[ram_slice].strip()
+        if not name:
+            continue
+        vram_gb = 0.0
+        try:
+            vram_bytes = int(ram_str)
+            vram_gb = round(vram_bytes / (1024 ** 3), 1)
+        except (ValueError, TypeError):
+            vram_gb = 0.0
+        return {"present": True, "name": name, "vram_gb": vram_gb}
+
+    return None
+
+
+def _get_gpu_info_windows_via_gputil() -> dict | None:
+    try:
+        import GPUtil  # type: ignore
+
+        gpus = GPUtil.getGPUs()
+        if gpus:
+            gpu = gpus[0]
+            return {
+                "present": True,
+                "name": gpu.name,
+                "vram_gb": round(gpu.memoryTotal / 1024, 1),
+            }
+    except Exception as exc:
+        logger.debug("GPUtil fallback failed: %s", exc)
+    return None
+
+
 def _get_gpu_info_windows() -> dict:
     """
-    Detect GPU on Windows using subprocesses with timeouts.
-    GPUtil/nvidia-ml-python can block the asyncio event loop indefinitely;
-    subprocess.run(..., timeout=5) avoids that.
+    Detect GPU on Windows. Try wmic first (works for any vendor), then fall
+    back to GPUtil. All probes run in subprocesses with short timeouts so
+    they cannot stall the asyncio event loop.
     """
-    # NVIDIA via nvidia-smi
+    # Primary: wmic (covers NVIDIA, AMD, Intel, etc.)
     try:
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            ["wmic", "path", "win32_VideoController", "get", "name,AdapterRAM"],
             capture_output=True, text=True, timeout=5,
         )
         if result.returncode == 0 and result.stdout.strip():
-            parts = [p.strip() for p in result.stdout.strip().split("\n")[0].split(",")]
-            if len(parts) >= 2:
-                try:
-                    vram_gb = round(float(parts[1]) / 1024, 1)
-                except ValueError:
-                    vram_gb = 0
-                return {"present": True, "name": parts[0], "vram_gb": vram_gb}
-    except Exception:
-        pass
+            parsed = _parse_wmic_video_controller(result.stdout)
+            if parsed is not None:
+                return parsed
+    except Exception as exc:
+        logger.debug("wmic GPU probe failed: %s", exc)
 
-    # Any GPU via wmic (AMD, Intel, etc.)
-    try:
-        result = subprocess.run(
-            ["wmic", "path", "win32_VideoController", "get", "Name,AdapterRAM", "/format:csv"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0:
-            for line in result.stdout.strip().splitlines():
-                line = line.strip()
-                if not line or line.startswith("Node"):
-                    continue
-                parts = line.split(",")
-                if len(parts) >= 3:
-                    name = parts[-1].strip()
-                    try:
-                        vram_bytes = int(parts[1].strip())
-                        vram_gb = round(vram_bytes / (1024 ** 3), 1)
-                    except (ValueError, IndexError):
-                        vram_gb = 0
-                    if name:
-                        return {"present": True, "name": name, "vram_gb": vram_gb}
-    except Exception:
-        pass
+    # Fallback: GPUtil (NVIDIA-only, but useful when wmic is unavailable)
+    fallback = _get_gpu_info_windows_via_gputil()
+    if fallback is not None:
+        return fallback
 
     return {"present": False, "name": None, "vram_gb": 0}
 
@@ -169,7 +216,9 @@ def _get_gpu_info(ram_gb: float) -> dict:
     return {"present": False, "name": None, "vram_gb": 0}
 
 
-def _get_disk_space_gb(path: str = "/") -> float:
+def _get_disk_space_gb(path: str | None = None) -> float:
+    if path is None:
+        path = "C:\\" if platform.system() == "Windows" else "/"
     usage = shutil.disk_usage(path)
     return round(usage.free / (1024**3), 1)
 
@@ -182,17 +231,59 @@ def _recommend_tier(ram_gb: float, gpu_present: bool) -> Tier:
     return "large"
 
 
+# Safe defaults — used when probing fails so the frontend always gets a usable
+# response and never gets stuck waiting for "perfect" data.
+_DEFAULT_PROFILE: dict = {
+    "ram_gb": 8,
+    "gpu_present": False,
+    "gpu_name": None,
+    "vram_gb": 0,
+    "disk_free_gb": 50,
+    "recommended_tier": "small",
+    "platform": platform.system() or "Unknown",
+}
+
+
+def default_profile() -> dict:
+    """Return a copy of the safe-default profile."""
+    profile = dict(_DEFAULT_PROFILE)
+    profile["platform"] = platform.system() or "Unknown"
+    return profile
+
+
 def get_hardware_profile() -> dict:
-    ram_bytes = psutil.virtual_memory().total
-    ram_gb = round(ram_bytes / (1024**3), 1)
+    """
+    Return a flat hardware profile. This function NEVER raises — if any probe
+    fails, the corresponding field falls back to a safe default. The frontend
+    relies on this guarantee to advance past the hardware-scan step.
+    """
+    profile = dict(_DEFAULT_PROFILE)
+    profile["platform"] = platform.system() or "Unknown"
 
-    gpu = _get_gpu_info(ram_gb)
-    disk_gb = _get_disk_space_gb()
-    tier = _recommend_tier(ram_gb, gpu["present"])
+    try:
+        ram_bytes = psutil.virtual_memory().total
+        profile["ram_gb"] = round(ram_bytes / (1024**3), 1)
+    except Exception:
+        logger.exception("RAM probe failed; using default")
 
-    return {
-        "ram_gb": ram_gb,
-        "gpu": gpu,
-        "disk_free_gb": disk_gb,
-        "recommended_tier": tier,
-    }
+    try:
+        gpu = _get_gpu_info(float(profile["ram_gb"]))
+        profile["gpu_present"] = bool(gpu.get("present", False))
+        profile["gpu_name"] = gpu.get("name") or None
+        profile["vram_gb"] = gpu.get("vram_gb", 0) or 0
+    except Exception:
+        logger.exception("GPU probe failed; using defaults")
+
+    try:
+        profile["disk_free_gb"] = _get_disk_space_gb()
+    except Exception:
+        logger.exception("Disk probe failed; using default")
+
+    try:
+        profile["recommended_tier"] = _recommend_tier(
+            float(profile["ram_gb"]), bool(profile["gpu_present"])
+        )
+    except Exception:
+        logger.exception("Tier recommendation failed; using default")
+
+    return profile

@@ -164,18 +164,21 @@ async def health() -> dict[str, str]:
 async def system_info() -> dict[str, Any]:
     # Run synchronous hardware probing in a thread so it never blocks the
     # asyncio event loop (subprocess calls inside can stall for seconds).
+    # hardware.get_hardware_profile is contractually guaranteed not to raise
+    # — if probing fails it returns a profile populated with safe defaults so
+    # the onboarding flow can always advance past the hardware-scan step.
     loop = asyncio.get_event_loop()
     try:
-        result = await asyncio.wait_for(
+        return await asyncio.wait_for(
             loop.run_in_executor(None, hardware.get_hardware_profile),
             timeout=15.0,
         )
-        return result
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail={"message": "Hardware probe timed out"})
-    except Exception as exc:
-        logger.exception("hardware probe failed")
-        raise HTTPException(status_code=500, detail={"message": str(exc)}) from exc
+        logger.warning("hardware probe timed out; returning defaults")
+        return hardware.default_profile()
+    except Exception:
+        logger.exception("hardware probe failed; returning defaults")
+        return hardware.default_profile()
 
 
 class InstallRequest(BaseModel):

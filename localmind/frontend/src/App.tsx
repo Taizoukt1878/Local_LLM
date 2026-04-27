@@ -27,8 +27,8 @@ export default function App() {
   useEffect(() => {
     const checkOnLaunch = async () => {
       try {
-        await waitForBackend(() => {
-          setStartupMessage("Taking longer than usual to start, please wait...");
+        await waitForBackend((message) => {
+          setStartupMessage(message);
         });
       } catch {
         setFatalError(
