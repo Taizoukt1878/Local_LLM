@@ -375,8 +375,8 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
           </div>
         )}
 
-        {/* Windows-specific security prompt hint */}
-        {isWindows && !installFailed && installProgress > 0 && (
+        {/* Windows-specific security prompt hint — shown before and during install */}
+        {isWindows && !installFailed && (
           <div className="flex items-start gap-3 bg-blue-400/10 border border-blue-400/30 rounded-xl px-4 py-3 w-full">
             <AlertCircle size={16} className="text-blue-400 mt-0.5 flex-shrink-0" />
             <p className="text-sm text-blue-200">

@@ -22,7 +22,9 @@ def _get_ollama_path() -> str | None:
         Path("/usr/local/bin/ollama"),
         Path("/usr/bin/ollama"),
         Path.home() / ".local" / "bin" / "ollama",
-        Path("C:/Program Files/Ollama/ollama.exe"),
+        # Windows: OllamaSetup.exe installs per-user to %LOCALAPPDATA% (no admin required)
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe",
+        Path("C:/Program Files/Ollama/ollama.exe"),  # system-wide install fallback
         # macOS: Ollama.app bundle binary (present even before the CLI symlink is created)
         Path("/Applications/Ollama.app/Contents/Resources/ollama"),
     ]
@@ -43,12 +45,23 @@ def start_ollama_serve() -> None:
     if not path:
         return
     try:
-        subprocess.Popen(
-            [path, "serve"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        if platform.system() == "Windows":
+            # On Windows, use creation flags to detach without a visible console window.
+            # start_new_session=True maps to CREATE_NEW_PROCESS_GROUP on Windows and
+            # does not suppress the console; DETACHED_PROCESS does.
+            subprocess.Popen(
+                [path, "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
+            )
+        else:
+            subprocess.Popen(
+                [path, "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
     except Exception:
         pass  # already running or not installed — caller handles this
 
@@ -273,6 +286,9 @@ async def install_ollama(sudo_password: str | None = None) -> AsyncGenerator[dic
                     "retryable": True,
                 }
                 return
+
+            yield {"stage": "installing", "percent": 97, "message": "Starting Ollama service..."}
+            start_ollama_serve()
     else:
         yield {
             "stage": "error",
