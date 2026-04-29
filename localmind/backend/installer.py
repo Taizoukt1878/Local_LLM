@@ -260,35 +260,85 @@ async def install_ollama(sudo_password: str | None = None) -> AsyncGenerator[dic
                 pass
 
     elif system == "Windows":
-        with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = tempfile.mkdtemp()
+        try:
             exe_path = Path(tmpdir) / "OllamaSetup.exe"
 
             yield {"stage": "downloading", "percent": 0, "message": "Downloading Ollama for Windows..."}
             async for progress in _download_file(OLLAMA_WINDOWS_URL, exe_path):
                 yield {**progress, "message": f"Downloading... {progress['percent']}%"}
 
-            yield {"stage": "installing", "percent": 90, "message": "Running installer..."}
-            proc = await asyncio.create_subprocess_exec(
-                str(exe_path), "/S",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await proc.wait()
+            yield {"stage": "installing", "percent": 85, "message": "Running Ollama installer..."}
 
-            if proc.returncode != 0:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    str(exe_path), "/S",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+            except Exception as exc:
+                yield {
+                    "stage": "error",
+                    "percent": 0,
+                    "message": f"Failed to launch installer: {exc}. Please try again.",
+                    "retryable": True,
+                }
+                return
+
+            # Wait for the installer while sending periodic heartbeat events so
+            # the SSE connection is not silently dropped by WebView2 (which
+            # closes idle connections after ~30 s of inactivity on Windows).
+            wait_task = asyncio.create_task(proc.wait())
+            install_timeout = 300  # 5-minute hard cap
+            elapsed = 0
+            while not wait_task.done():
+                done, _ = await asyncio.wait({wait_task}, timeout=8.0)
+                if done:
+                    break
+                elapsed += 8
+                if elapsed >= install_timeout:
+                    proc.kill()
+                    await wait_task
+                    break
+                yield {"stage": "installing", "percent": 90, "message": "Installing Ollama, please wait..."}
+
+            # Poll for the binary regardless of the installer's exit code —
+            # some Windows installers spawn a background helper and return
+            # before the files are fully written.
+            yield {"stage": "installing", "percent": 92, "message": "Verifying Ollama installation..."}
+            installed = False
+            for attempt in range(60):
+                if is_ollama_installed():
+                    installed = True
+                    break
+                await asyncio.sleep(1)
+                if attempt % 5 == 4:
+                    yield {"stage": "installing", "percent": 93, "message": "Waiting for installation to complete..."}
+
+            if not installed:
                 yield {
                     "stage": "error",
                     "percent": 0,
                     "message": (
-                        "We need permission to install Ollama. "
-                        "Please try again and click Allow when Windows asks."
+                        "Ollama installation could not be verified. "
+                        "Please try again, or install Ollama manually from ollama.com."
                     ),
                     "retryable": True,
                 }
                 return
 
             yield {"stage": "installing", "percent": 97, "message": "Starting Ollama service..."}
-            start_ollama_serve()
+            # Ollama's Windows installer auto-starts the service — only launch
+            # a new instance if nothing is already listening on port 11434.
+            import socket as _socket
+            try:
+                with _socket.create_connection(("127.0.0.1", 11434), timeout=2):
+                    pass  # already running
+            except OSError:
+                start_ollama_serve()
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
     else:
         yield {
             "stage": "error",

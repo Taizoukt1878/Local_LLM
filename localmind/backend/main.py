@@ -323,6 +323,10 @@ async def chat_endpoint(req: ChatRequest) -> StreamingResponse:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    # Ensure ProactorEventLoop on Windows — required for asyncio.create_subprocess_exec.
+    # Python 3.8+ defaults to this, but some packaging tools reset the policy.
+    if platform.system() == "Windows":
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     # Free any stale backend process before binding the port.
     _free_port(8765)
     # Use the app object directly instead of a string import — string-based
