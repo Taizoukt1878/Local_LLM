@@ -157,6 +157,12 @@ export function streamOllamaInstall(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sudo_password: sudoPassword ?? null }),
   }).then(async (res) => {
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error("[api] failed:", "/install/ollama", `HTTP ${res.status}`, text);
+      onEvent({ type: "error", status: res.status, detail: text });
+      return;
+    }
     const reader = res.body?.getReader();
     if (!reader) return;
     const decoder = new TextDecoder();

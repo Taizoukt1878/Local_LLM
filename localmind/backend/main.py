@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -186,9 +186,16 @@ class InstallRequest(BaseModel):
 
 
 @app.post("/install/ollama")
-async def install_ollama_endpoint(req: InstallRequest = InstallRequest()) -> StreamingResponse:
+async def install_ollama_endpoint(
+    req: InstallRequest | None = Body(default=None),
+) -> StreamingResponse:
+    # Body is optional: Windows' tauri-plugin-http can ship the request with
+    # Content-Type: application/json but an empty/mis-framed body, which would
+    # otherwise fail Pydantic parsing with 422. sudo_password is only used on
+    # Linux, so a missing body is always fine.
+    pwd = req.sudo_password if req and req.sudo_password else None
     return StreamingResponse(
-        _stream_generator(installer.install_ollama(sudo_password=req.sudo_password or None)),
+        _stream_generator(installer.install_ollama(sudo_password=pwd)),
         media_type="text/event-stream",
     )
 
