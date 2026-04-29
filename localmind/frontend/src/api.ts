@@ -148,15 +148,10 @@ export async function deleteModel(name: string, backend: string) {
  *  sudoPassword is forwarded to the backend for Linux installs that need sudo. */
 export function streamOllamaInstall(
   onEvent: (data: Record<string, unknown>) => void,
-  sudoPassword?: string,
 ): () => void {
   let closed = false;
 
-  apiFetch(`${BASE}/install/ollama`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sudo_password: sudoPassword ?? null }),
-  }).then(async (res) => {
+  apiFetch(`${BASE}/install/ollama`, { method: "POST" }).then(async (res) => {
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       console.error("[api] failed:", "/install/ollama", `HTTP ${res.status}`, text);

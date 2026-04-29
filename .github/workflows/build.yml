@@ -16,20 +16,78 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # ── Python — built-in pip download cache ─────────────────────────────
       - uses: actions/setup-python@v5
-        with: { python-version: "3.10" }
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: localmind/backend/requirements.txt
+
       - uses: dtolnay/rust-toolchain@stable
+
+      # ── Node — built-in npm download cache ───────────────────────────────
       - uses: actions/setup-node@v4
-        with: { node-version: "20" }
-      - run: cd localmind/frontend && npm install
-      - run: cd localmind && pip install -r backend/requirements.txt pyinstaller
-      - run: cargo install tauri-cli --version "^2"
-      - run: cd localmind && python build_backend.py
-      - run: cd localmind && cargo tauri build
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: localmind/frontend/package-lock.json
+
+      # ── Cargo registry + git sources ─────────────────────────────────────
+      # Saves re-downloading crates on every run.
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: windows-cargo-registry-${{ hashFiles('localmind/src-tauri/Cargo.lock') }}
+          restore-keys: windows-cargo-registry-
+
+      # ── tauri-cli binary ─────────────────────────────────────────────────
+      # Compiling tauri-cli from source takes 5-10 min; cache the binary so
+      # subsequent runs skip it entirely.
+      - name: Cache tauri-cli binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: windows-cargo-bin-tauri-cli-v2
+          restore-keys: windows-cargo-bin-
+
+      # ── Rust incremental build artifacts ─────────────────────────────────
+      # The biggest win: caching compiled deps means only changed crates are
+      # recompiled. Exclude the bundle/ output — that's what we upload.
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            localmind/src-tauri/target
+            !localmind/src-tauri/target/release/bundle
+          key: windows-rust-target-${{ hashFiles('localmind/src-tauri/Cargo.lock') }}
+          restore-keys: windows-rust-target-
+
+      # ── Build steps ───────────────────────────────────────────────────────
+      - name: Install frontend dependencies
+        run: cd localmind/frontend && npm install
+
+      - name: Install Python dependencies
+        run: cd localmind && pip install -r backend/requirements.txt pyinstaller
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build Python sidecar
+        run: cd localmind && python build_backend.py
+
+      - name: Build Tauri app
+        run: cd localmind && cargo tauri build
+
+      # ── Artifacts ─────────────────────────────────────────────────────────
       - uses: actions/upload-artifact@v4
         with:
           name: windows-msi
           path: localmind/src-tauri/target/release/bundle/msi/*.msi
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-nsis

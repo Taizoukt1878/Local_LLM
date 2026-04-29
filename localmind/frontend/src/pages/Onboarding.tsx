@@ -134,7 +134,6 @@ function Pill({
 type Step = "welcome" | "scanning" | "hardware" | "install" | "pick" | "pulling" | "ready";
 
 const isWindows = /win/i.test(navigator.userAgent) && !/android/i.test(navigator.userAgent);
-const isLinux = !isWindows && /linux/i.test(navigator.userAgent);
 
 export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [step, setStep] = useState<Step>("welcome");
@@ -143,15 +142,12 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [installMessage, setInstallMessage] = useState("");
   const [installFailed, setInstallFailed] = useState(false);
   const [installRetryable, setInstallRetryable] = useState(false);
-  const [permissionPrompt, setPermissionPrompt] = useState(false);
   const [catalog, setCatalog] = useState<Record<string, TierData>>({});
   const [selectedTier, setSelectedTier] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [pullPercent, setPullPercent] = useState(0);
   const [pullStatus, setPullStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [sudoPassword, setSudoPassword] = useState("");
-  const [needsSudo, setNeedsSudo] = useState(false);
 
   // Track whether the current scan has already advanced — prevents the
   // hard-timeout fallback from racing the real response and double-advancing.
@@ -245,26 +241,15 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
     setInstallMessage("Starting...");
     setInstallFailed(false);
     setInstallRetryable(false);
-    setPermissionPrompt(false);
-    setNeedsSudo(false);
     setError(null);
 
     const cleanup = streamOllamaInstall((event) => {
-      if (event.stage === "permission_prompt") {
-        setPermissionPrompt(true);
-        setInstallMessage(event.message as string);
-        return;
-      }
       if (event.percent !== undefined) setInstallProgress(event.percent as number);
       if (event.message) setInstallMessage(event.message as string);
-      if (event.stage === "downloading" || event.stage === "installing") {
-        setPermissionPrompt(false);
-      }
       if (event.stage === "error") {
         setInstallFailed(true);
         setInstallRetryable((event.retryable as boolean) ?? false);
         setError(event.message as string);
-        if (event.needs_sudo) setNeedsSudo(true);
         cleanup();
       }
       if (event.done) {
@@ -293,8 +278,8 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
           setStep("hardware");
         })();
       }
-    }, sudoPassword || undefined);
-  }, [sudoPassword]);
+    });
+  }, []);
 
   // Step: pull model
   const startPull = useCallback(() => {
@@ -451,15 +436,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
           </p>
         </div>
 
-        {/* Permission prompt banner */}
-        {permissionPrompt && !installFailed && (
-          <div className="flex items-start gap-3 bg-amber-400/10 border border-amber-400/30 rounded-xl px-4 py-3 w-full">
-            <AlertCircle size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
-            <p className="text-sm text-amber-200">{installMessage}</p>
-          </div>
-        )}
-
-        {/* Windows-specific security prompt hint — shown before and during install */}
+        {/* Windows security prompt hint */}
         {isWindows && !installFailed && (
           <div className="flex items-start gap-3 bg-blue-400/10 border border-blue-400/30 rounded-xl px-4 py-3 w-full">
             <AlertCircle size={16} className="text-blue-400 mt-0.5 flex-shrink-0" />
@@ -467,43 +444,6 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
               Windows may show a security prompt — please click{" "}
               <strong>Yes</strong> or <strong>Allow</strong> if asked.
             </p>
-          </div>
-        )}
-
-        {/* Linux sudo password field */}
-        {isLinux && idle && (
-          <div className="w-full space-y-2">
-            <label className="text-sm text-zinc-400 block">
-              Administrator password{" "}
-              <span className="text-zinc-600">(required to install Ollama)</span>
-            </label>
-            <input
-              type="password"
-              value={sudoPassword}
-              onChange={(e) => setSudoPassword(e.target.value)}
-              placeholder="Enter your sudo password"
-              className="w-full bg-surface-2 border border-zinc-700 rounded-xl px-4 py-2.5 text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-accent text-sm"
-            />
-            <p className="text-xs text-zinc-600">
-              Leave blank if your system is configured for passwordless sudo.
-            </p>
-          </div>
-        )}
-
-        {/* Linux sudo prompt after failed attempt without password */}
-        {isLinux && needsSudo && installFailed && (
-          <div className="w-full space-y-2">
-            <label className="text-sm text-zinc-300 block font-medium">
-              Administrator password required
-            </label>
-            <input
-              type="password"
-              value={sudoPassword}
-              onChange={(e) => setSudoPassword(e.target.value)}
-              placeholder="Enter your sudo password"
-              className="w-full bg-surface-2 border border-accent/50 rounded-xl px-4 py-2.5 text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-accent text-sm"
-              autoFocus
-            />
           </div>
         )}
 
