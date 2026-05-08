@@ -89,7 +89,7 @@ export default function About({ onClose }: Props) {
             <span className="ml-auto text-xs text-fg-muted">github.com/Taizoukt1878</span>
           </button>
           <button
-            onClick={() => openLink("https://linkedin.com")}
+            onClick={() => openLink("https://www.linkedin.com/in/anouar-taizoukt/")}
             className="flex items-center gap-3 px-4 py-3 rounded-xl bg-surface-2 border border-stroke hover:border-fg-muted transition-colors text-sm text-fg-base"
           >
             <span className="text-fg-muted"><LinkedInIcon /></span>
@@ -97,7 +97,7 @@ export default function About({ onClose }: Props) {
             <span className="ml-auto text-xs text-fg-muted">Add your URL</span>
           </button>
           <button
-            onClick={() => openLink("https://x.com")}
+            onClick={() => openLink("https://x.com/CalvertLewin4")}
             className="flex items-center gap-3 px-4 py-3 rounded-xl bg-surface-2 border border-stroke hover:border-fg-muted transition-colors text-sm text-fg-base"
           >
             <span className="text-fg-muted"><TwitterIcon /></span>
