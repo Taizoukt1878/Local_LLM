@@ -66,7 +66,10 @@ async def delete_model(name: str) -> None:
 
 
 async def chat(
-    model: str, messages: list[dict[str, str]]
+    model: str,
+    messages: list[dict[str, str]],
+    system_prompt: str = "",
+    temperature: float = 0.7,
 ) -> AsyncGenerator[dict, None]:
     """
     Stream a chat response from Ollama.
@@ -79,10 +82,11 @@ async def chat(
             f"{OLLAMA_BASE}/api/chat",
             json={
                 "model": model,
+                "system": system_prompt,
                 "messages": messages,
                 "stream": True,
                 "options": {
-                    "temperature": 0.3,
+                    "temperature": temperature,
                     "repeat_penalty": 1.2,
                     "num_ctx": 4096,
                     "top_p": 0.85,

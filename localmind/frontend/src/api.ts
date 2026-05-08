@@ -1,9 +1,36 @@
 import { invoke } from "@tauri-apps/api/core";
-// tauri-plugin-http routes all HTTP through Rust, bypassing the WebView2
-// loopback network-isolation restriction on Windows.
-import { fetch } from "@tauri-apps/plugin-http";
+// tauri-plugin-http routes HTTP through Rust to bypass WebView2 loopback
+// isolation on Windows. On macOS/Linux native fetch works fine for localhost.
+import { fetch as _tauriFetch } from "@tauri-apps/plugin-http";
+
+const _isWindows = /win/i.test(navigator.userAgent) && !/android/i.test(navigator.userAgent);
+const fetch: typeof globalThis.fetch = _isWindows
+  ? (_tauriFetch as unknown as typeof globalThis.fetch)
+  : globalThis.fetch.bind(globalThis);
 
 const BASE = "http://127.0.0.1:8765";
+
+export interface Mind {
+  id: string;
+  name: string;
+  emoji: string;
+  description: string;
+  temperature: number;
+  recommended_for: string[];
+  suggested_prompts: string[];
+}
+
+export async function getMinds(): Promise<Mind[]> {
+  const res = await fetch(`${BASE}/minds`);
+  if (!res.ok) throw new Error("Failed to load minds");
+  return res.json();
+}
+
+export async function getMind(mindId: string): Promise<Mind> {
+  const res = await fetch(`${BASE}/minds/${mindId}`);
+  if (!res.ok) throw new Error("Failed to load mind");
+  return res.json();
+}
 
 /** Poll the backend port every 500ms for up to 60 seconds (120 attempts).
  *  Uses a Rust TCP command so WebView2's loopback network-isolation on
@@ -151,14 +178,15 @@ export function streamChat(
   messages: { role: string; content: string }[],
   onToken: (token: string) => void,
   onDone: () => void,
-  onError: (msg: string) => void
+  onError: (msg: string) => void,
+  mindId: string = "general"
 ): () => void {
   let closed = false;
 
   fetch(`${BASE}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, backend, messages }),
+    body: JSON.stringify({ model, backend, messages, mind_id: mindId }),
   })
     .then(async (res) => {
       if (!res.ok) {

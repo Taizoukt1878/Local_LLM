@@ -21,6 +21,7 @@ import catalog
 import hardware
 import installer
 import llamacpp_backend
+import minds as minds_module
 import ollama_backend
 
 logging.basicConfig(level=logging.INFO)
@@ -147,6 +148,7 @@ class ChatRequest(BaseModel):
     model: str
     backend: str = "ollama"
     messages: list[dict[str, str]]
+    mind_id: str = "general"
 
 
 # ---------------------------------------------------------------------------
@@ -288,10 +290,27 @@ async def list_installed() -> list[dict]:
     return results
 
 
+@app.get("/minds")
+async def list_minds() -> list[dict]:
+    return minds_module.list_minds()
+
+
+@app.get("/minds/{mind_id}")
+async def get_mind(mind_id: str) -> dict:
+    return minds_module.get_mind(mind_id)
+
+
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest) -> StreamingResponse:
+    mind = minds_module.get_mind(req.mind_id)
+    system_prompt: str = mind["system_prompt"]
+    temperature: float = mind["temperature"]
+
+    # Strip any existing system message from the client — mind takes precedence.
+    clean_messages = [m for m in req.messages if m.get("role") != "system"]
+
     if req.backend == "ollama":
-        gen = ollama_backend.chat(req.model, req.messages)
+        gen = ollama_backend.chat(req.model, clean_messages, system_prompt, temperature)
     elif req.backend == "llamacpp":
         models_dir = __import__("pathlib").Path.home() / "localmind" / "models"
         model_path = str(models_dir / req.model)
@@ -299,7 +318,7 @@ async def chat_endpoint(req: ChatRequest) -> StreamingResponse:
             llamacpp_backend.load_model(model_path)
         except Exception as exc:
             raise HTTPException(status_code=500, detail={"message": f"Could not load model: {exc}"}) from exc
-        gen = llamacpp_backend.chat(req.messages)
+        gen = llamacpp_backend.chat(clean_messages)
     else:
         raise HTTPException(status_code=400, detail={"message": f"Unknown backend: {req.backend}"})
 

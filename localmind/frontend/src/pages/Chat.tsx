@@ -12,12 +12,23 @@ import {
   AlertCircle,
   Bot,
   RotateCcw,
+  Info,
 } from "lucide-react";
-import { streamChat, getInstalledModels, deleteModel, getCatalog, streamModelPull } from "../api";
+import {
+  streamChat,
+  getInstalledModels,
+  deleteModel,
+  getCatalog,
+  streamModelPull,
+  getMinds,
+  Mind,
+} from "../api";
 import ChatMessage from "../components/ChatMessage";
+import MindPicker from "../components/MindPicker";
+import About from "../components/About";
 
 interface Message {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
 }
 
@@ -32,37 +43,18 @@ interface Props {
   onToggleDark: () => void;
 }
 
-const SYSTEM_PROMPT = `You are a concise, accurate AI assistant running locally on the user's device.
-  ## Core Rules
-    - Answer only what is asked. Do not expand scope unless asked.
-    - Never add meta-commentary, parenthetical notes, or explanations of your own reasoning.
-    - Never explain why you gave a response or what you chose not to include.
-    - Do not preface answers with affirmations like "Great question!", "Sure!", or "Of course!".
-    - Do not end responses with offers like "Let me know if you need anything else!"
-
-    ## Honesty
-    - If you don't know something, say "I don't know" directly.
-    - Never invent facts, URLs, file paths, code that you haven't verified, or capabilities you are unsure about.
-    - Distinguish clearly between what you know and what you're guessing.
-
-    ## Format
-    - Match response length to the complexity of the request. Short questions get short answers.
-    - Use plain prose by default. Use lists or code blocks only when they genuinely aid clarity.
-    - No unnecessary padding, preamble, or summaries at the end.`;
-
 const MAX_ASSISTANT_CHARS = 800;
 
 function prepareHistory(
   messages: Message[],
   newUserMsg: Message
 ): { role: string; content: string }[] {
-  const history = [...messages, newUserMsg];
-  const truncated = history.map((msg) =>
+  const history = [...messages, newUserMsg].filter((m) => m.role !== "system");
+  return history.map((msg) =>
     msg.role === "assistant" && msg.content.length > MAX_ASSISTANT_CHARS
       ? { ...msg, content: msg.content.slice(0, MAX_ASSISTANT_CHARS) + " […]" }
       : msg
   );
-  return [{ role: "system", content: SYSTEM_PROMPT }, ...truncated];
 }
 
 export default function Chat({ darkMode, onToggleDark }: Props) {
@@ -74,13 +66,24 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
   const [installedModels, setInstalledModels] = useState<InstalledModel[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   const [loadingModels, setLoadingModels] = useState(true);
   const [catalog, setCatalog] = useState<Record<string, { models: { id: string; label: string; tagline: string; backend: string; size_gb: number; description: string; download_url?: string }[] }>>({});
   const [pulling, setPulling] = useState<Record<string, number>>({});
+  const [minds, setMinds] = useState<Mind[]>([]);
+  const [selectedMind, setSelectedMind] = useState("general");
+  const [toast, setToast] = useState<string | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 2500);
+  }, []);
 
   const loadModels = useCallback(async () => {
     setLoadingModels(true);
@@ -103,6 +106,10 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
   }, [loadModels]);
 
   useEffect(() => {
+    getMinds().then(setMinds).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -113,6 +120,21 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
     ta.style.height = "auto";
     ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
   }, [input]);
+
+  const handleMindSelect = useCallback((mindId: string) => {
+    if (mindId === selectedMind) return;
+    setSelectedMind(mindId);
+    const mind = minds.find((m) => m.id === mindId);
+    if (mind) {
+      setMessages([
+        {
+          role: "system",
+          content: `Switched to ${mind.emoji} ${mind.name} mind`,
+        },
+      ]);
+      showToast(`Now chatting with ${mind.name}`);
+    }
+  }, [selectedMind, minds, showToast]);
 
   const sendMessage = useCallback(() => {
     if (!input.trim() || streaming || !currentModel) return;
@@ -147,14 +169,14 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
       (msg) => {
         setError(msg);
         setStreaming(false);
-        // Remove empty assistant bubble
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           return last?.content === "" ? prev.slice(0, -1) : prev;
         });
-      }
+      },
+      selectedMind
     );
-  }, [input, streaming, currentModel, messages]);
+  }, [input, streaming, currentModel, messages, selectedMind]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -205,10 +227,24 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
     return null;
   };
 
+  const currentMind = minds.find((m) => m.id === selectedMind);
+  const hasConversation = messages.some((m) => m.role === "user");
+  const suggestedPrompts = !hasConversation && currentMind ? currentMind.suggested_prompts : [];
+
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
     <div className="flex h-screen bg-surface text-fg-base">
+      {/* Toast */}
+      {toast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[70] bg-surface-1 border border-stroke text-fg-base text-sm px-4 py-2 rounded-xl shadow-lg transition-all">
+          {toast}
+        </div>
+      )}
+
+      {/* About modal */}
+      {showAbout && <About onClose={() => setShowAbout(false)} />}
+
       {/* Main chat area */}
       <div className="flex flex-col flex-1 min-w-0">
         {/* Header */}
@@ -288,14 +324,25 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
             </div>
           )}
 
-          {messages.map((msg, i) => (
-            <ChatMessage
-              key={i}
-              role={msg.role}
-              content={msg.content}
-              streaming={streaming && i === messages.length - 1 && msg.role === "assistant"}
-            />
-          ))}
+          {messages.map((msg, i) => {
+            if (msg.role === "system") {
+              return (
+                <div key={i} className="flex justify-center">
+                  <span className="text-xs text-fg-muted bg-surface-2 border border-stroke px-3 py-1 rounded-full">
+                    {msg.content}
+                  </span>
+                </div>
+              );
+            }
+            return (
+              <ChatMessage
+                key={i}
+                role={msg.role as "user" | "assistant"}
+                content={msg.content}
+                streaming={streaming && i === messages.length - 1 && msg.role === "assistant"}
+              />
+            );
+          })}
 
           {error && (
             <div className="flex items-center gap-2 text-red-400 text-sm bg-red-400/10 rounded-xl px-4 py-3">
@@ -307,8 +354,35 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
           <div ref={bottomRef} />
         </div>
 
-        {/* Input */}
-        <div className="px-5 pb-5 pt-3 border-t border-stroke">
+        {/* Input area */}
+        <div className="px-5 pb-5 pt-3 border-t border-stroke space-y-2">
+          {/* Suggested prompt chips — shown before first message */}
+          {suggestedPrompts.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {suggestedPrompts.map((prompt, i) => (
+                <button
+                  key={i}
+                  onClick={() => setInput(prompt)}
+                  className="text-xs px-3 py-1.5 rounded-xl bg-surface-2 border border-stroke text-fg-soft hover:border-accent/50 hover:text-fg-base transition-colors"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Mind picker row */}
+          {minds.length > 0 && (
+            <div className="flex items-center">
+              <MindPicker
+                minds={minds}
+                selectedMindId={selectedMind}
+                onSelect={handleMindSelect}
+              />
+            </div>
+          )}
+
+          {/* Text input */}
           <div className="flex items-end gap-3 bg-surface-1 border border-stroke rounded-2xl px-4 py-3 focus-within:border-accent/50 transition-colors">
             <textarea
               ref={textareaRef}
@@ -336,7 +410,8 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
               )}
             </button>
           </div>
-          <p className="text-[11px] text-fg-muted text-center mt-2">
+
+          <p className="text-[11px] text-fg-muted text-center">
             Everything runs locally on your device. No data leaves your computer.
           </p>
         </div>
@@ -411,17 +486,6 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
                 )}
               </section>
 
-              {/* Reset onboarding */}
-              <section className="mt-auto pt-4 border-t border-stroke">
-                <button
-                  onClick={handleResetOnboarding}
-                  className="flex items-center gap-2 w-full text-sm text-fg-soft hover:text-red-400 hover:bg-red-500/10 px-3 py-2.5 rounded-xl transition-colors"
-                >
-                  <RotateCcw size={14} />
-                  Reset &amp; restart setup
-                </button>
-              </section>
-
               {/* Download more */}
               <section>
                 <h3 className="text-xs font-semibold text-fg-muted uppercase tracking-wider mb-3">
@@ -476,6 +540,32 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
                   ))}
                 </div>
               </section>
+
+              {/* Bottom actions */}
+              <section className="mt-auto pt-4 border-t border-stroke space-y-1">
+                <button
+                  onClick={() => {
+                    setShowSettings(false);
+                    setShowAbout(true);
+                  }}
+                  className="flex items-center gap-2 w-full text-sm text-fg-soft hover:text-fg-base hover:bg-surface-2 px-3 py-2.5 rounded-xl transition-colors"
+                >
+                  <Info size={14} />
+                  About LocalMind
+                </button>
+                <button
+                  onClick={handleResetOnboarding}
+                  className="flex items-center gap-2 w-full text-sm text-fg-soft hover:text-red-400 hover:bg-red-500/10 px-3 py-2.5 rounded-xl transition-colors"
+                >
+                  <RotateCcw size={14} />
+                  Reset &amp; restart setup
+                </button>
+              </section>
+
+              {/* Made by footer */}
+              <p className="text-[11px] text-fg-muted text-center pb-1">
+                Made with ♥ by Anouar Taizoukt
+              </p>
             </div>
           </div>
         </div>
