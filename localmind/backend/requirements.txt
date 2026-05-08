@@ -5,3 +5,8 @@ gputil
 requests
 llama-cpp-python
 httpx
+docling
+sentence-transformers
+python-multipart
+python-docx
+pypdf

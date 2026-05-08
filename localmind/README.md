@@ -101,6 +101,15 @@ npm run dev
 
 ---
 
+## Talk to your Docs — first-run note
+
+The "Talk to your Docs" feature uses a local embedding model (`all-MiniLM-L6-v2`) to
+index your documents. On first use, sentence-transformers will download this model
+automatically (~80 MB). This is a one-time download stored in `~/.cache/huggingface/`.
+No documents ever leave your machine.
+
+---
+
 ## Troubleshooting
 
 ### llama-cpp-python build failures

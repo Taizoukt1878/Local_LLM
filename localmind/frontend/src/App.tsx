@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import Onboarding from "./pages/Onboarding";
 import Chat from "./pages/Chat";
+import DocsChat from "./pages/DocsChat";
 import ModelPicker from "./pages/ModelPicker";
 import { getInstallStatus, getInstalledModels, waitForBackend } from "./api";
 
@@ -129,6 +130,10 @@ export default function App() {
             <Navigate to="/onboarding" replace />
           )
         }
+      />
+      <Route
+        path="/docs"
+        element={onboardingDone ? <DocsChat /> : <Navigate to="/onboarding" replace />}
       />
       <Route
         path="/models"

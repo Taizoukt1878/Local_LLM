@@ -171,6 +171,99 @@ export function streamModelPull(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Docs / RAG API
+// ---------------------------------------------------------------------------
+
+export interface DocInfo {
+  id: string;
+  name: string;
+  pages: number;
+  size_kb: number;
+  indexed_at: string;
+}
+
+export interface DocCompatibility {
+  supported: boolean;
+  level: "full" | "limited" | "unsupported";
+  message: string;
+}
+
+export async function getDocsCompatibility(): Promise<DocCompatibility> {
+  const res = await fetch(`${BASE}/docs/compatibility`);
+  if (!res.ok) throw new Error("Failed to check docs compatibility");
+  return res.json();
+}
+
+export async function listDocuments(): Promise<DocInfo[]> {
+  const res = await fetch(`${BASE}/docs`);
+  if (!res.ok) throw new Error("Failed to list documents");
+  return res.json();
+}
+
+export async function uploadDocument(file: File): Promise<DocInfo> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${BASE}/docs/upload`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) throw new Error("Upload failed");
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data as DocInfo;
+}
+
+export async function deleteDocument(docId: string): Promise<boolean> {
+  const res = await fetch(`${BASE}/docs/${encodeURIComponent(docId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to delete document");
+  const data = await res.json();
+  return data.success as boolean;
+}
+
+export async function chatWithDocument(
+  docId: string,
+  question: string,
+  model: string,
+  backend: string,
+  mindId: string,
+  onChunk: (chunk: string) => void
+): Promise<void> {
+  const res = await fetch(`${BASE}/docs/${encodeURIComponent(docId)}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, model, backend, mind_id: mindId }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: "Unknown error" }));
+    throw new Error(err.message ?? "Something went wrong");
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) return;
+  const decoder = new TextDecoder();
+  let buf = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      try {
+        const event = JSON.parse(line.slice(6));
+        if (event.done) return;
+        if (event.token) onChunk(event.token);
+      } catch (_) {}
+    }
+  }
+}
+
 /** Stream chat response. Returns a cleanup fn. */
 export function streamChat(
   model: string,

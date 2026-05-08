@@ -39,6 +39,14 @@ def has_llama_cpp() -> bool:
     return importlib.util.find_spec("llama_cpp") is not None
 
 
+def has_sentence_transformers() -> bool:
+    return importlib.util.find_spec("sentence_transformers") is not None
+
+
+def has_docling() -> bool:
+    return importlib.util.find_spec("docling") is not None
+
+
 def main() -> None:
     BINARIES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -75,6 +83,7 @@ def main() -> None:
         "--hidden-import", "uvicorn.lifespan.on",
         "--hidden-import", "fastapi",
         "--hidden-import", "pydantic",
+        "--hidden-import", "multipart",
         "--hidden-import", "GPUtil",
         "--hidden-import", "psutil",
     ]
@@ -92,6 +101,12 @@ def main() -> None:
             "WARNING: llama-cpp-python not found, building without CPU backend. "
             "Install it with: pip install llama-cpp-python"
         )
+
+    # NOTE: sentence-transformers / transformers / torch are NOT bundled here.
+    # These libraries access their own .py source files at runtime via inspect,
+    # which breaks inside a PyInstaller --onefile binary. The docs feature loads
+    # them lazily; they must be installed in the user's Python environment instead.
+    # For dev mode (`python main.py`), install with: pip install sentence-transformers
 
     cmd.append(str(BACKEND_DIR / "main.py"))
 

@@ -247,6 +247,19 @@ export default function Chat({ darkMode, onToggleDark }: Props) {
 
       {/* Main chat area */}
       <div className="flex flex-col flex-1 min-w-0">
+        {/* Navigation tabs */}
+        <div className="flex items-center border-b border-stroke bg-surface-1 px-5">
+          <button className="py-3 px-1 mr-4 text-sm border-b-2 border-accent text-fg-base font-medium transition-colors">
+            💬 Chat
+          </button>
+          <button
+            onClick={() => navigate("/docs")}
+            className="py-3 px-1 text-sm border-b-2 border-transparent text-fg-muted hover:text-fg-base transition-colors"
+          >
+            📄 Docs
+          </button>
+        </div>
+
         {/* Header */}
         <header className="flex items-center justify-between px-5 py-3 border-b border-stroke bg-surface-1">
           <div className="flex items-center gap-2">

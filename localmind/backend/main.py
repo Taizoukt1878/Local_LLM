@@ -4,20 +4,25 @@ LocalMind FastAPI backend — runs as a sidecar on localhost:8765.
 import asyncio
 import json
 import logging
+import os
 import platform
 import socket
 import subprocess
+import tempfile
 import time
+import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, AsyncGenerator
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import catalog
+import docs_backend
 import hardware
 import installer
 import llamacpp_backend
@@ -321,6 +326,138 @@ async def chat_endpoint(req: ChatRequest) -> StreamingResponse:
         gen = llamacpp_backend.chat(clean_messages)
     else:
         raise HTTPException(status_code=400, detail={"message": f"Unknown backend: {req.backend}"})
+
+    return StreamingResponse(_stream_generator(gen), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# Docs / RAG endpoints
+# ---------------------------------------------------------------------------
+
+class DocChatRequest(BaseModel):
+    question: str
+    model: str
+    backend: str = "ollama"
+    mind_id: str = "general"
+
+
+@app.get("/docs/compatibility")
+async def docs_compatibility() -> dict:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, docs_backend.check_compatibility)
+
+
+@app.get("/docs")
+async def list_docs() -> list:
+    return docs_backend.list_docs()
+
+
+_ALLOWED_DOC_EXTS = {".pdf", ".docx", ".txt"}
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def _check_docs_available() -> None:
+    if not docs_backend.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": (
+                    "The document feature requires sentence-transformers. "
+                    "Run: pip install sentence-transformers and restart the backend."
+                )
+            },
+        )
+
+
+@app.post("/docs/upload")
+async def upload_document(file: UploadFile = File(...)) -> dict:
+    _check_docs_available()
+
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in _ALLOWED_DOC_EXTS:
+        return {"error": f"Unsupported file type '{ext}'. Use PDF, DOCX, or TXT."}
+
+    content = await file.read()
+    if len(content) > _MAX_UPLOAD_BYTES:
+        return {"error": "File too large. Maximum size is 50 MB."}
+
+    doc_id = str(uuid.uuid4())
+    tmp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        loop = asyncio.get_event_loop()
+        metadata = await loop.run_in_executor(
+            None,
+            docs_backend.parse_and_index,
+            tmp_path,
+            doc_id,
+            file.filename or "document",
+        )
+        return metadata
+    except ImportError as exc:
+        logger.warning("docs unavailable: %s", exc)
+        return {"error": str(exc)}
+    except Exception as exc:
+        logger.warning("parse_and_index failed: %s", exc)
+        return {
+            "error": "Could not read this file. Make sure it is not password protected or corrupted."
+        }
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+@app.delete("/docs/{doc_id}")
+async def delete_document(doc_id: str) -> dict:
+    deleted = docs_backend.delete_doc(doc_id)
+    return {"success": deleted}
+
+
+@app.post("/docs/{doc_id}/chat")
+async def doc_chat_endpoint(doc_id: str, req: DocChatRequest) -> StreamingResponse:
+    _check_docs_available()
+    if doc_id not in docs_backend.DOC_STORE:
+        raise HTTPException(status_code=404, detail={"message": "Document not found"})
+
+    loop = asyncio.get_event_loop()
+    try:
+        context = await loop.run_in_executor(
+            None, docs_backend.query, doc_id, req.question
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"message": str(exc)}) from exc
+
+    mind = minds_module.get_mind(req.mind_id)
+    system_prompt: str = mind["system_prompt"]
+    temperature: float = mind["temperature"]
+
+    user_content = (
+        "Use the following context from my document to answer my question. "
+        "If the answer is not in the context, say clearly that you could not find it in the document.\n\n"
+        f"Context:\n{context}\n\n"
+        f"Question: {req.question}"
+    )
+    messages = [{"role": "user", "content": user_content}]
+
+    if req.backend == "ollama":
+        gen = ollama_backend.chat(req.model, messages, system_prompt, temperature)
+    elif req.backend == "llamacpp":
+        models_dir = Path.home() / "localmind" / "models"
+        model_path = str(models_dir / req.model)
+        try:
+            llamacpp_backend.load_model(model_path)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail={"message": f"Could not load model: {exc}"}
+            ) from exc
+        gen = llamacpp_backend.chat(messages)
+    else:
+        raise HTTPException(
+            status_code=400, detail={"message": f"Unknown backend: {req.backend}"}
+        )
 
     return StreamingResponse(_stream_generator(gen), media_type="text/event-stream")
 
