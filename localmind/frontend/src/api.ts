@@ -105,8 +105,15 @@ export function streamOllamaInstall(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sudo_password: sudoPassword ?? null }),
   }).then(async (res) => {
+    if (!res.ok) {
+      onEvent({ stage: "error", message: `Server error ${res.status}. Please restart the app and try again.`, retryable: true });
+      return;
+    }
     const reader = res.body?.getReader();
-    if (!reader) return;
+    if (!reader) {
+      onEvent({ stage: "error", message: "No response from backend. Please restart the app.", retryable: false });
+      return;
+    }
     const decoder = new TextDecoder();
     let buf = "";
 
@@ -123,6 +130,10 @@ export function streamOllamaInstall(
           } catch (_) {}
         }
       }
+    }
+  }).catch(() => {
+    if (!closed) {
+      onEvent({ stage: "error", message: "Could not reach the backend. Please restart the app and try again.", retryable: false });
     }
   });
 
@@ -145,8 +156,15 @@ export function streamModelPull(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, backend, download_url: downloadUrl }),
   }).then(async (res) => {
+    if (!res.ok) {
+      onEvent({ error: `Server error ${res.status}. Please restart the app and try again.` });
+      return;
+    }
     const reader = res.body?.getReader();
-    if (!reader) return;
+    if (!reader) {
+      onEvent({ error: "No response stream from backend. Please restart the app." });
+      return;
+    }
     const decoder = new TextDecoder();
     let buf = "";
 
@@ -163,6 +181,10 @@ export function streamModelPull(
           } catch (_) {}
         }
       }
+    }
+  }).catch(() => {
+    if (!closed) {
+      onEvent({ error: "Could not reach the backend. Please restart the app and try again." });
     }
   });
 

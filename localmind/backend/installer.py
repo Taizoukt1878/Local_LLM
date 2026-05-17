@@ -223,6 +223,16 @@ async def install_ollama(sudo_password: str | None = None) -> AsyncGenerator[dic
                 }
                 return
 
+            # Remove macOS quarantine attribute from the whole app bundle so
+            # Gatekeeper doesn't block the binary on first run.
+            try:
+                subprocess.run(
+                    ["xattr", "-dr", "com.apple.quarantine", str(app_dst)],
+                    capture_output=True,
+                )
+            except Exception:
+                pass
+
             try:
                 ollama_bin.chmod(ollama_bin.stat().st_mode | 0o111)
             except Exception:

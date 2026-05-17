@@ -99,6 +99,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [pullPercent, setPullPercent] = useState(0);
   const [pullStatus, setPullStatus] = useState("");
+  const [pullError, setPullError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sudoPassword, setSudoPassword] = useState("");
   const [needsSudo, setNeedsSudo] = useState(false);
@@ -191,7 +192,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
         (async () => {
           setInstallMessage("Setting up Ollama, please wait...");
           await new Promise((r) => setTimeout(r, 3000));
-          for (let attempt = 0; attempt < 5; attempt++) {
+          for (let attempt = 0; attempt < 15; attempt++) {
             try {
               const status = await getInstallStatus();
               if (status.running) {
@@ -201,12 +202,17 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
             } catch {
               // not ready yet
             }
-            if (attempt < 4) {
+            if (attempt < 14) {
               await new Promise((r) => setTimeout(r, 2000));
             }
           }
-          // Proceed anyway — Ollama may still be initialising.
-          setStep("hardware");
+          // Ollama installed but not responding — surface an actionable error.
+          setInstallFailed(true);
+          setInstallRetryable(true);
+          setError(
+            "Ollama was installed but didn't start. On a new Mac, macOS may have blocked it — " +
+            "open System Settings → Privacy & Security, click \"Allow\" next to Ollama, then try again."
+          );
         })();
       }
     }, sudoPassword || undefined);
@@ -222,12 +228,18 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
     setStep("pulling");
     setPullPercent(0);
     setPullStatus("Starting download...");
+    setPullError(null);
 
     const cleanup = streamModelPull(
       model.id,
       model.backend,
       model.download_url,
       (event) => {
+        if (event.error) {
+          setPullError(event.error as string);
+          cleanup();
+          return;
+        }
         if (event.percent !== undefined) setPullPercent(event.percent as number);
         if (event.status) setPullStatus(event.status as string);
         if (event.done) {
@@ -499,20 +511,41 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center px-8 gap-8 max-w-lg mx-auto w-full">
         <div className="text-center">
-          <Loader2 size={36} className="text-accent animate-spin mx-auto mb-4" />
+          {pullError ? (
+            <AlertCircle size={36} className="text-red-400 mx-auto mb-4" />
+          ) : (
+            <Loader2 size={36} className="text-accent animate-spin mx-auto mb-4" />
+          )}
           <h2 className="text-2xl font-bold text-zinc-100">Downloading your model</h2>
-          <p className="text-zinc-400 mt-2 text-sm">
-            This might take a few minutes depending on your connection.
-          </p>
+          {!pullError && (
+            <p className="text-zinc-400 mt-2 text-sm">
+              This might take a few minutes depending on your connection.
+            </p>
+          )}
         </div>
 
-        <div className="w-full space-y-3">
-          <ProgressBar percent={pullPercent} />
-          <div className="flex justify-between text-xs text-zinc-500">
-            <span>{pullStatus}</span>
-            <span>{pullPercent}%</span>
+        {pullError ? (
+          <div className="w-full space-y-4">
+            <div className="flex items-start gap-2 text-red-400 text-sm bg-red-400/10 rounded-xl px-4 py-3">
+              <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+              <span>{pullError}</span>
+            </div>
+            <button
+              onClick={() => { setPullError(null); setStep("pick"); }}
+              className="w-full flex items-center justify-center gap-2 bg-accent hover:bg-accent-hover text-white font-medium px-8 py-3 rounded-xl transition-colors"
+            >
+              Try Again <ChevronRight size={18} />
+            </button>
           </div>
-        </div>
+        ) : (
+          <div className="w-full space-y-3">
+            <ProgressBar percent={pullPercent} />
+            <div className="flex justify-between text-xs text-zinc-500">
+              <span>{pullStatus}</span>
+              <span>{pullPercent}%</span>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
